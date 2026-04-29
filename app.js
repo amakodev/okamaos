@@ -23,22 +23,22 @@ const fallbackCatalog = {
 
 const fallbackUpdates = {
   latest: {
-    version: "1.0.1",
-    codename: "First Wave Notify",
+    version: "1.0.2",
+    codename: "Safe System Update",
     date: "2026-04-29",
     status: "preview",
     priority: "recommended",
-    title: "OS and game update notifications",
+    title: "Safe system updates with data preservation",
     summary:
-      "OkamaOS now checks the public update feed and app catalog, then shows in-OS notifications when OS or installed-game updates are available.",
+      "OkamaOS can now apply repo-hosted system update bundles that replace CLI, shell, runtime, and brand files while preserving games, saves, settings, and update backups.",
     notes: [
-      "Adds home-screen notifications for available OS updates.",
-      "Adds installed-game update detection against the public app catalog.",
-      "Updates okama-update check to print notices and download links."
+      "Adds real okama-update apply support for .okupdate system bundles.",
+      "Backs up replaced system files before applying an update.",
+      "Preserves games, saves, controllers, logs, cache, and local config."
     ],
     release_notes_url: "CHANGELOG.md",
-    download_url: "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.1.okupdate",
-    artifact_status: "manifest-ready"
+    download_url: "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.2.okupdate",
+    artifact_status: "bundle-ready"
   }
 };
 
