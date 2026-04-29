@@ -17,7 +17,7 @@
       "Updates okama-update check to print the same update notices and download links."
     ],
     "release_notes_url": "CHANGELOG.md",
-    "download_url": "https://amakodev.github.io/okamaos_projectX/updates/okamaos-v1.0.1.okupdate",
+    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.1.okupdate",
     "artifact_status": "manifest-ready",
     "sha256": "49a5d0f7db78159ae27e588e1e462888b2d08d512d69222ff1a63e5483f6dea0",
     "size_bytes": 858

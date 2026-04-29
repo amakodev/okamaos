@@ -10,8 +10,8 @@ const fallbackCatalog = {
       tagline: "The first controller-first drop for every fresh OkamaOS build.",
       description:
         "Reference demo game showing sprite movement, pause handling, save state, audio permissions, and clean return to the OkamaOS shell.",
-      download_url: "https://amakodev.github.io/okamaos_projectX/downloads/games/com.okamalabs.demo-0.1.1.ok",
-      manifest_url: "https://amakodev.github.io/okamaos_projectX/catalog/manifests/com.okamalabs.demo.json",
+      download_url: "https://zyntrixsolutions.github.io/okamaos/downloads/games/com.okamalabs.demo-0.1.1.ok",
+      manifest_url: "https://zyntrixsolutions.github.io/okamaos/catalog/manifests/com.okamalabs.demo.json",
       sha256: "10689ad9449d9d54bbc648e66a6b59784424757a035f8f6164479b2d4cd6ef44",
       size_bytes: 13520,
       min_os_version: "0.1.0",
@@ -37,7 +37,7 @@ const fallbackUpdates = {
       "Updates okama-update check to print notices and download links."
     ],
     release_notes_url: "CHANGELOG.md",
-    download_url: "https://amakodev.github.io/okamaos_projectX/updates/okamaos-v1.0.1.okupdate",
+    download_url: "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.1.okupdate",
     artifact_status: "manifest-ready"
   }
 };
