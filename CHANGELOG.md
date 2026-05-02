@@ -1,5 +1,11 @@
 # OkamaOS Portal Changelog
 
+## 2026-05-02 - v1.3.2 ui-stability update package
+
+- Published `okamaos-v1.3.2.okupdate` system update bundle (35 KB).
+- Updated `feed.json`: v1.3.2 "ui-stability" is now latest; v1.3.1 moved to previous.
+- SHA-256: `2958569ea63b81ad6b84772fd52aba9e3bc77103e6ccc8d1a401d6faa2c7fffd`
+
 ## 2026-05-02 - Mobile-first polish (v2.1.0)
 
 - Fixed: Global `h1` font-size was `clamp(3.25rem, 10.4vw, 8.8rem)` causing page titles to overflow inner pages; reduced to `clamp(2.2rem, 5.5vw, 5rem)` and added `!important` override on `.page-hero h1`.
