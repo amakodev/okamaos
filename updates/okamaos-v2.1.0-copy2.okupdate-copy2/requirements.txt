@@ -1,5 +1,0 @@
-# OkamaOS v2.1.0 – relay controls & wallet security dependencies
-# Installed by okama-update during apply
-eth-account>=0.8.0
-mnemonic>=0.20
-argon2-cffi>=21.3.0
