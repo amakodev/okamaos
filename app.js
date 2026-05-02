@@ -201,8 +201,36 @@ function startSignalCanvas() {
   draw();
 }
 
+function initMobileNav() {
+  const toggle = document.querySelector(".nav-toggle");
+  const nav = document.getElementById("primary-nav");
+  if (!toggle || !nav) return;
+
+  toggle.addEventListener("click", () => {
+    const expanded = toggle.getAttribute("aria-expanded") === "true";
+    toggle.setAttribute("aria-expanded", !expanded);
+    nav.classList.toggle("nav-open", !expanded);
+  });
+
+  nav.querySelectorAll("a").forEach((link) => {
+    link.addEventListener("click", () => {
+      toggle.setAttribute("aria-expanded", "false");
+      nav.classList.remove("nav-open");
+    });
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && nav.classList.contains("nav-open")) {
+      toggle.setAttribute("aria-expanded", "false");
+      nav.classList.remove("nav-open");
+      toggle.focus();
+    }
+  });
+}
+
 async function boot() {
   startSignalCanvas();
+  initMobileNav();
   if (document.getElementById("catalogGrid") || document.getElementById("updateCard")) {
     const [catalog, updates] = await Promise.all([
       loadJson("catalog/apps.json", fallbackCatalog),

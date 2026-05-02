@@ -10,21 +10,24 @@
     <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
   </head>
-  <body>
+  <body class="inner-page">
     <canvas id="signalCanvas" aria-hidden="true"></canvas>
     <header class="site-header">
       <a class="brand" href="index.html" aria-label="OkamaOS home">
         <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
       </a>
-      <nav aria-label="Primary navigation">
+      <nav id="primary-nav" aria-label="Primary navigation">
         <a href="docs.html">Docs</a>
         <a href="packages.html">Packages</a>
         <a href="studio.html">Studio</a>
+        <a href="index.html#get-started">Get OS</a>
         <a href="index.html#games">Games</a>
-        <a href="index.html#updates">Updates</a>
         <a href="changelog.html" aria-current="page">Changelog</a>
       </nav>
-      <a class="header-action" href="updates/feed.json">Feed JSON</a>
+      <a class="header-action" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio</a>
+      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="primary-nav">
+        <span></span><span></span><span></span>
+      </button>
     </header>
 
     <div class="page-hero">

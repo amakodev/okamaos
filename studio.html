@@ -10,21 +10,24 @@
     <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
   </head>
-  <body>
+  <body class="inner-page">
     <canvas id="signalCanvas" aria-hidden="true"></canvas>
     <header class="site-header">
       <a class="brand" href="index.html" aria-label="OkamaOS home">
         <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
       </a>
-      <nav aria-label="Primary navigation">
+      <nav id="primary-nav" aria-label="Primary navigation">
         <a href="docs.html">Docs</a>
         <a href="packages.html">Packages</a>
         <a href="studio.html" aria-current="page">Studio</a>
+        <a href="index.html#get-started">Get OS</a>
         <a href="index.html#games">Games</a>
-        <a href="index.html#updates">Updates</a>
         <a href="changelog.html">Changelog</a>
       </nav>
-      <a class="header-action" href="updates/feed.json">Feed JSON</a>
+      <a class="header-action" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio</a>
+      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="primary-nav">
+        <span></span><span></span><span></span>
+      </button>
     </header>
 
     <main>
@@ -40,7 +43,7 @@
             OkamaOS device over your local network.
           </p>
           <div class="hero-actions">
-            <a class="button primary" href="https://studio.okamaos.dev" target="_blank" rel="noopener">Open Studio</a>
+            <a class="button primary" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio free</a>
             <a class="button secondary" href="#getting-started">Getting started</a>
           </div>
         </div>
@@ -149,7 +152,8 @@
             <p>Studio API keys are stored in your browser's <code>localStorage</code> only — they are never sent to any server. Keys are required to enable AI features.</p>
             <p>Go to Settings in Studio to enter your keys. The free-tier Gemini model (<code>gemini-3.1-flash-lite-preview</code>) works with a free Google AI Studio API key.</p>
             <div class="inline-actions">
-              <a class="button primary" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get Gemini key</a>
+              <a class="button primary" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio free</a>
+              <a class="button secondary" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get Gemini key</a>
               <a class="button secondary" href="https://dashscope.aliyuncs.com/" target="_blank" rel="noopener">Get Qwen key</a>
             </div>
           </div>

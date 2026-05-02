@@ -17,15 +17,18 @@
       <a class="brand" href="index.html" aria-label="OkamaOS home">
         <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
       </a>
-      <nav aria-label="Primary navigation">
+      <nav id="primary-nav" aria-label="Primary navigation">
         <a href="docs.html">Docs</a>
         <a href="packages.html">Packages</a>
         <a href="studio.html">Studio</a>
+        <a href="#get-started">Get OS</a>
         <a href="#games">Games</a>
-        <a href="#updates">Updates</a>
         <a href="changelog.html">Changelog</a>
       </nav>
-      <a class="header-action" href="updates/feed.json">Feed JSON</a>
+      <a class="header-action" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio</a>
+      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="primary-nav">
+        <span></span><span></span><span></span>
+      </button>
     </header>
 
     <main id="top">
@@ -41,8 +44,8 @@
             and this site is the source of truth for everything in the ecosystem.
           </p>
           <div class="hero-actions" aria-label="Primary actions">
-            <a class="button primary" href="#games">Download games</a>
-            <a class="button secondary" href="docs.html">Read the docs</a>
+            <a class="button primary" href="#get-started">Get OkamaOS free</a>
+            <a class="button secondary" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Build a game now</a>
           </div>
         </div>
         <div class="hero-panel" aria-label="Ecosystem status">
@@ -78,6 +81,65 @@
             AI assistance. The catalog is still small — that is the opportunity
             for early creators and early players alike.
           </p>
+        </div>
+      </section>
+
+      <!-- ── Get Started / Download ── -->
+      <section class="band" id="get-started" aria-labelledby="getstarted-title">
+        <div class="section-inner">
+          <p class="eyebrow">Get OkamaOS</p>
+          <h2 id="getstarted-title">Download, install, and play — three ways in.</h2>
+          <div class="install-grid">
+
+            <div class="install-card">
+              <span class="platform-tag">Recommended</span>
+              <span class="install-card-num">Option A &mdash; Live USB</span>
+              <h3>Boot from USB stick</h3>
+              <p>Flash OkamaOS to any USB drive and boot your PC directly into the game console. No installation needed &mdash; just plug in and play.</p>
+              <ol class="install-steps">
+                <li data-step="1"><span>Download the OkamaOS image from GitHub Releases.</span></li>
+                <li data-step="2"><span>Download <strong>Balena Etcher</strong> (free, balena.io/etcher) &mdash; works on Windows, Mac, and Linux.</span></li>
+                <li data-step="3"><span>Insert a USB drive (8 GB+), open Etcher, select the OkamaOS image and your USB drive, then click Flash.</span></li>
+                <li data-step="4"><span>Restart your PC. Press <strong>F12</strong> (or F2 / Del) at the BIOS screen and choose your USB drive from the boot menu.</span></li>
+                <li data-step="5"><span>Plug in a gamepad and enjoy! 🎮</span></li>
+              </ol>
+              <a class="button primary" href="https://github.com/zyntrixsolutions/okamaos/releases/latest" target="_blank" rel="noopener">Download OkamaOS Image</a>
+            </div>
+
+            <div class="install-card">
+              <span class="platform-tag">Try it safely</span>
+              <span class="install-card-num">Option B &mdash; VirtualBox</span>
+              <h3>Run inside VirtualBox</h3>
+              <p>Test OkamaOS without touching your PC. VirtualBox is free and runs on Windows, Mac, and Linux. Great for trying it out first.</p>
+              <ol class="install-steps">
+                <li data-step="1"><span>Download <strong>VirtualBox</strong> (free, virtualbox.org) and install it.</span></li>
+                <li data-step="2"><span>Download the OkamaOS image from GitHub Releases.</span></li>
+                <li data-step="3"><span>Open VirtualBox &rarr; <em>New</em>. Name it &ldquo;OkamaOS&rdquo;, Type: <strong>Linux</strong>, Version: <strong>Other Linux (64-bit)</strong>.</span></li>
+                <li data-step="4"><span>Set RAM to <strong>2 GB</strong> (2048 MB) and create a 20 GB virtual hard disk.</span></li>
+                <li data-step="5"><span>In Settings &rarr; Storage, attach the OkamaOS image as an optical drive. Start and boot!</span></li>
+              </ol>
+              <a class="button primary" href="https://github.com/zyntrixsolutions/okamaos/releases/latest" target="_blank" rel="noopener">Download OkamaOS Image</a>
+            </div>
+
+            <div class="install-card">
+              <span class="platform-tag">Developers</span>
+              <span class="install-card-num">Option C &mdash; Build from source</span>
+              <h3>Build OkamaOS yourself</h3>
+              <p>Clone the repo, run <code>make setup &amp;&amp; make okamaos-build</code>, and boot your custom image in QEMU. Full Buildroot-based build.</p>
+              <ol class="install-steps">
+                <li data-step="1"><span>Install prerequisites: <code>git make gcc python3 qemu</code></span></li>
+                <li data-step="2"><span><code>git clone</code> the OkamaOS repository.</span></li>
+                <li data-step="3"><span>Run <code>make setup</code> to fetch Buildroot, then <code>make okamaos-build</code> (takes 1&ndash;3 hours first time).</span></li>
+                <li data-step="4"><span>Run <code>make okamaos-run-qemu</code> to test your build in a virtual machine.</span></li>
+              </ol>
+              <a class="button secondary" href="docs.html#build-guide">Read the build guide &rarr;</a>
+            </div>
+          </div>
+
+          <div class="studio-cta-bar">
+            <p>Rather <span>make games</span> than play them? Okama Studio is a free, AI-powered game builder &mdash; works in any browser, no download needed.</p>
+            <a class="button primary" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio free &rarr;</a>
+          </div>
         </div>
       </section>
 
@@ -232,24 +294,29 @@
       <section class="band creator-band" id="creators" aria-labelledby="creators-title">
         <div class="section-inner creator-grid">
           <div>
-            <p class="eyebrow">Creator call</p>
-            <h2 id="creators-title">Ship while the shelf is still uncrowded.</h2>
+            <p class="eyebrow">Make games — free</p>
+            <h2 id="creators-title">Build a game in your browser right now.</h2>
+            <p style="color:var(--muted);line-height:1.7;margin-top:14px">Okama Studio is free. No downloads. Open your browser, describe your game to the AI, and you're coding. Export as <code>.ok</code> and play it on OkamaOS.</p>
+            <div class="inline-actions" style="margin-top:24px">
+              <a class="button primary" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio free</a>
+              <a class="button secondary" href="studio.html">How Studio works</a>
+            </div>
           </div>
           <div class="creator-steps">
             <article>
               <span>01</span>
-              <h3>Build in Studio</h3>
-              <p>Use Okama Studio's AI agent and 3-panel IDE to write Python + pygame games in the browser — no install needed.</p>
+              <h3>Open Studio</h3>
+              <p>Go to <strong>okamaos.zyntrix.solutions</strong>. Pick a game template &mdash; platformer, top-down, puzzle, or arcade. The AI writes the starter code.</p>
             </article>
             <article>
               <span>02</span>
-              <h3>Export as <code>.ok</code></h3>
-              <p>The Package Builder tab signs, validates, and downloads your game bundle. Test it wirelessly via the dev server.</p>
+              <h3>Build with AI</h3>
+              <p>Chat with the Okama Agent. Say &ldquo;add a jumping mechanic&rdquo; or &ldquo;make enemies faster&rdquo;. It writes the full file and runs the preview instantly.</p>
             </article>
             <article>
               <span>03</span>
-              <h3>Drop into catalog</h3>
-              <p>Every release gets a manifest, SHA-256 hash, and a visible listing with version and size metadata.</p>
+              <h3>Export &amp; Play</h3>
+              <p>Hit Package &rarr; Build. Download your <code>.ok</code> file. Install it on OkamaOS via USB or the wireless dev server. Done.</p>
             </article>
           </div>
         </div>
