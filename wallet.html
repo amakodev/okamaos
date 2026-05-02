@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10120f">
+    <meta name="description" content="OkamaOS Wallet — view your OKToken balance, NFT assets, and transaction history on Base.">
+    <title>Wallet | OkamaOS</title>
+    <link rel="manifest" href="site.webmanifest">
+    <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+      .wallet-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 28px; }
+      @media (max-width: 700px) { .wallet-grid { grid-template-columns: 1fr; } }
+      .balance-card { background: #181a16; border: 1px solid rgba(243,239,228,0.10); border-radius: 16px; padding: 28px; }
+      .balance-label { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #6b7464; margin-bottom: 6px; }
+      .balance-value { font-size: 2rem; font-weight: 900; line-height: 1.1; }
+      .balance-value.eth  { color: #64a6ff; }
+      .balance-value.okt  { color: #8df77f; }
+      .balance-address { font-family: monospace; font-size: 13px; color: #c9c3b3; word-break: break-all; margin-top: 8px; }
+      .nft-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 24px; }
+      .nft-card  { background: #181a16; border: 1px solid rgba(243,239,228,0.10); border-radius: 12px; padding: 16px; }
+      .nft-card h3 { font-size: 14px; font-weight: 700; margin: 8px 0 4px; }
+      .nft-card .rarity { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .rarity.legendary { color: #ffcf4a; }
+      .rarity.epic      { color: #b47aff; }
+      .rarity.rare      { color: #53d9e6; }
+      .rarity.common    { color: #c9c3b3; }
+      .connect-area { background: #181a16; border: 1px solid rgba(243,239,228,0.14); border-radius: 16px; padding: 36px; text-align: center; margin-top: 28px; }
+      .connect-area h2 { font-size: 1.3rem; font-weight: 900; margin-bottom: 10px; }
+      .connect-area p  { color: #c9c3b3; font-size: 14px; line-height: 1.6; max-width: 420px; margin: 0 auto 20px; }
+      .connect-buttons { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+      .wallet-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+      .badge-base { background: rgba(100,166,255,0.12); color: #64a6ff; }
+      .tx-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid rgba(243,239,228,0.07); font-size: 13px; }
+      .tx-row:last-child { border-bottom: none; }
+      .tx-type { color: #8df77f; font-weight: 700; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+      .tx-amount { font-weight: 700; color: #ffcf4a; }
+      #txList { min-height: 60px; }
+      .status-offline { color: #f26d5b; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="signalCanvas" aria-hidden="true"></canvas>
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="OkamaOS home">
+        <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
+      </a>
+      <nav id="primary-nav" aria-label="Primary navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="marketplace.html">Marketplace</a>
+        <a href="wallet.html" aria-current="page">Wallet</a>
+        <a href="leaderboard.html">Leaderboard</a>
+      </nav>
+      <a class="header-action" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio</a>
+      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="primary-nav">
+        <span></span><span></span><span></span>
+      </button>
+    </header>
+
+    <main>
+      <section class="band" style="padding-top:48px">
+        <div class="section-inner">
+          <p class="eyebrow">On-chain</p>
+          <h1 style="font-size:clamp(1.6rem,4vw,2.4rem);font-weight:900;margin:0 0 6px">
+            Your OkamaOS Wallet
+          </h1>
+          <p style="color:#c9c3b3;max-width:560px;line-height:1.7;margin:0 0 8px">
+            Connect with MetaMask or import your on-device keystore to view your
+            <strong style="color:#8df77f">OKToken</strong> balance,
+            <strong style="color:#ffcf4a">OKAssets</strong> NFTs, and reward history.
+            All transactions are on <span class="wallet-badge badge-base">Base</span>.
+          </p>
+
+          <!-- Connect panel (shown when no wallet) -->
+          <div class="connect-area" id="connectArea">
+            <h2>Connect your wallet</h2>
+            <p>
+              Use MetaMask (or any EIP-1193 browser wallet) to view your OKToken
+              balance and NFT assets. On-device OkamaOS wallets can be exported
+              via <code>okama-wallet export</code>.
+            </p>
+            <div class="connect-buttons">
+              <button class="button primary" id="btnMetaMask">Connect MetaMask</button>
+              <button class="button secondary" id="btnManual">Enter address manually</button>
+            </div>
+            <div id="manualEntry" style="display:none;margin-top:20px">
+              <input id="manualAddr" type="text" placeholder="0x…"
+                style="width:100%;max-width:420px;padding:10px 14px;border-radius:10px;
+                       border:1px solid rgba(243,239,228,0.18);background:#10120f;
+                       color:#f3efe4;font-family:monospace;font-size:13px">
+              <button class="button primary" id="btnLoad" style="margin-top:10px">Load balances</button>
+            </div>
+          </div>
+
+          <!-- Balance cards (shown when connected) -->
+          <div id="walletContent" style="display:none">
+            <div class="wallet-grid">
+              <div class="balance-card">
+                <div class="balance-label">ETH Balance</div>
+                <div class="balance-value eth" id="ethBalance">—</div>
+                <div class="balance-address" id="walletAddr"></div>
+              </div>
+              <div class="balance-card">
+                <div class="balance-label">OKToken (OKT)</div>
+                <div class="balance-value okt" id="oktBalance">—</div>
+                <div style="font-size:12px;color:#6b7464;margin-top:6px">ERC-20 · Base</div>
+              </div>
+            </div>
+
+            <!-- NFT Assets -->
+            <div style="margin-top:40px">
+              <h2 style="font-size:1.1rem;font-weight:900;margin-bottom:4px">NFT Assets (OKAssets)</h2>
+              <p style="color:#6b7464;font-size:13px">ERC-1155 game items owned on Base.</p>
+              <div class="nft-grid" id="nftGrid">
+                <p style="color:#6b7464;font-size:13px" id="nftEmpty">No NFT assets found for this address.</p>
+              </div>
+            </div>
+
+            <!-- TX log -->
+            <div style="margin-top:40px">
+              <h2 style="font-size:1.1rem;font-weight:900;margin-bottom:4px">Reward History</h2>
+              <p style="color:#6b7464;font-size:13px">Recent OKToken reward claims from gameplay.</p>
+              <div id="txList" style="margin-top:16px">
+                <p style="color:#6b7464;font-size:13px">No reward claims found.</p>
+              </div>
+            </div>
+
+            <div style="margin-top:24px">
+              <button class="button secondary" id="btnDisconnect">Disconnect</button>
+            </div>
+          </div>
+
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <img class="footer-logo" src="assets/okama-logo.svg" width="160" height="46" alt="OkamaOS">
+        <span>Console-grade Linux for low-cost x86_64 PCs.</span>
+      </div>
+      <nav aria-label="Footer navigation">
+        <a href="docs.html">Docs</a>
+        <a href="marketplace.html">Marketplace</a>
+        <a href="wallet.html">Wallet</a>
+        <a href="leaderboard.html">Leaderboard</a>
+        <a href="changelog.html">Changelog</a>
+      </nav>
+    </footer>
+
+    <script src="app.js"></script>
+    <script type="module">
+      const BASE_RPC       = "https://mainnet.base.org";
+      const ZERO_ADDR      = "0x0000000000000000000000000000000000000000";
+      const OKT_ADDRESS    = localStorage.getItem("okama-web3-oktoken")  || ZERO_ADDR;
+      const OKA_ADDRESS    = localStorage.getItem("okama-web3-okassets") || ZERO_ADDR;
+      const BAL_SEL        = "70a08231"; // balanceOf(address)
+      const BAL1155_SEL    = "00fdd58e"; // balanceOf(address,uint256)
+
+      async function rpc(method, params) {
+        const r = await fetch(BASE_RPC, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+        });
+        return r.json();
+      }
+
+      async function loadBalances(addr) {
+        document.getElementById("walletAddr").textContent = addr;
+        document.getElementById("connectArea").style.display  = "none";
+        document.getElementById("walletContent").style.display = "";
+
+        const ethRes = await rpc("eth_getBalance", [addr, "latest"]);
+        const ethWei = BigInt(ethRes.result || "0x0");
+        document.getElementById("ethBalance").textContent =
+          (Number(ethWei) / 1e18).toFixed(6) + " ETH";
+
+        if (OKT_ADDRESS !== ZERO_ADDR) {
+          const padded = addr.toLowerCase().replace("0x", "").padStart(64, "0");
+          const data   = "0x" + BAL_SEL + padded;
+          const res    = await rpc("eth_call", [{ to: OKT_ADDRESS, data }, "latest"]);
+          const units  = BigInt(res.result || "0x0");
+          document.getElementById("oktBalance").textContent =
+            (Number(units) / 1e18).toFixed(2) + " OKT";
+        } else {
+          document.getElementById("oktBalance").textContent = "Contract not deployed";
+        }
+      }
+
+      document.getElementById("btnMetaMask").addEventListener("click", async () => {
+        if (!window.ethereum) {
+          alert("MetaMask not detected. Install the MetaMask browser extension.");
+          return;
+        }
+        const [addr] = await window.ethereum.request({ method: "eth_requestAccounts" });
+        localStorage.setItem("okama-connected-addr", addr);
+        await loadBalances(addr);
+      });
+
+      document.getElementById("btnManual").addEventListener("click", () => {
+        const el = document.getElementById("manualEntry");
+        el.style.display = el.style.display === "none" ? "" : "none";
+      });
+
+      document.getElementById("btnLoad").addEventListener("click", async () => {
+        const addr = document.getElementById("manualAddr").value.trim();
+        if (!addr.startsWith("0x") || addr.length !== 42) {
+          alert("Enter a valid Ethereum address (0x…, 42 chars).");
+          return;
+        }
+        localStorage.setItem("okama-connected-addr", addr);
+        await loadBalances(addr);
+      });
+
+      document.getElementById("btnDisconnect").addEventListener("click", () => {
+        localStorage.removeItem("okama-connected-addr");
+        document.getElementById("connectArea").style.display   = "";
+        document.getElementById("walletContent").style.display = "none";
+      });
+
+      const stored = localStorage.getItem("okama-connected-addr");
+      if (stored) loadBalances(stored).catch(console.error);
+    </script>
+  </body>
+</html>
