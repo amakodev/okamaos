@@ -23,22 +23,26 @@ const fallbackCatalog = {
 
 const fallbackUpdates = {
   latest: {
-    version: "1.0.2",
-    codename: "Safe System Update",
-    date: "2026-04-29",
+    version: "1.3.0",
+    codename: "devlink",
+    date: "2026-05-02",
     status: "preview",
     priority: "recommended",
-    title: "Safe system updates with data preservation",
+    title: "Dev-server hosting, ZIP package support, input & console fixes",
     summary:
-      "OkamaOS can now apply repo-hosted system update bundles that replace CLI, shell, runtime, and brand files while preserving games, saves, settings, and update backups.",
+      "Fixes .ok package installs from Okama Studio (ZIP format), enables key-hold navigation, cleans ANSI codes in the dev console, and adds custom store URL for dev-server game hosting.",
     notes: [
-      "Adds real okama-update apply support for .okupdate system bundles.",
-      "Backs up replaced system files before applying an update.",
-      "Preserves games, saves, controllers, logs, cache, and local config."
+      "Fix: .ok packages built by Okama Studio (JSZip/ZIP) now install and run correctly.",
+      "Fix: Holding arrow or WASD keys now auto-repeats navigation.",
+      "Fix: Dev console no longer displays ANSI escape sequences as symbols.",
+      "Fix: Dev console command input tail-scrolls when longer than the display width.",
+      "Feature: Game Store X button opens custom store URL entry for wireless dev game installs."
     ],
-    release_notes_url: "CHANGELOG.md",
-    download_url: "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.2.okupdate",
-    artifact_status: "bundle-ready"
+    release_notes_url: "changelog.html",
+    download_url: "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.3.0.okupdate",
+    artifact_status: "bundle-ready",
+    sha256: "7311537148ec04ca436bb21fd31ee115a412fcd33cc9a2c3420077b46928666b",
+    size_bytes: 36623
   }
 };
 
@@ -199,12 +203,14 @@ function startSignalCanvas() {
 
 async function boot() {
   startSignalCanvas();
-  const [catalog, updates] = await Promise.all([
-    loadJson("catalog/apps.json", fallbackCatalog),
-    loadJson("updates/feed.json", fallbackUpdates)
-  ]);
-  renderCatalog(catalog);
-  renderUpdate(updates);
+  if (document.getElementById("catalogGrid") || document.getElementById("updateCard")) {
+    const [catalog, updates] = await Promise.all([
+      loadJson("catalog/apps.json", fallbackCatalog),
+      loadJson("updates/feed.json", fallbackUpdates)
+    ]);
+    if (document.getElementById("catalogGrid")) renderCatalog(catalog);
+    if (document.getElementById("updateCard")) renderUpdate(updates);
+  }
 }
 
 boot();

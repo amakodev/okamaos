@@ -4,10 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#10120f">
-    <meta
-      name="description"
-      content="OkamaOS public download, app catalog, and update hub for controller-first games on low-cost PCs.">
-    <title>OkamaOS | Console-grade Linux for the first wave</title>
+    <meta name="description"
+      content="OkamaOS ecosystem hub — OS docs, Studio, system packages, game catalog, updates, and full changelog for controller-first Linux gaming on low-cost PCs.">
+    <title>OkamaOS | Ecosystem Hub</title>
     <link rel="manifest" href="site.webmanifest">
     <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
@@ -15,38 +14,45 @@
   <body>
     <canvas id="signalCanvas" aria-hidden="true"></canvas>
     <header class="site-header">
-      <a class="brand" href="#top" aria-label="OkamaOS home">
+      <a class="brand" href="index.html" aria-label="OkamaOS home">
         <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
       </a>
       <nav aria-label="Primary navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
         <a href="#games">Games</a>
         <a href="#updates">Updates</a>
-        <a href="#creators">Creators</a>
+        <a href="changelog.html">Changelog</a>
       </nav>
-      <a class="header-action" href="updates/feed.json">Feed</a>
+      <a class="header-action" href="updates/feed.json">Feed JSON</a>
     </header>
 
     <main id="top">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-copy">
-          <p class="eyebrow">Public preview channel open</p>
+          <p class="eyebrow">Public preview — v1.3.0 devlink</p>
           <h1 id="hero-title" class="hero-logo-title">
             <img src="assets/okama-logo.svg" width="560" height="160" alt="OkamaOS">
           </h1>
           <p class="hero-text">
-            A controller-first Linux console for low-cost PCs. Games install as
-            `.ok` drops, updates land in public, and the first wave is small
-            enough for every great game to get noticed.
+            Controller-first Linux gaming OS for low-cost PCs. Games ship as
+            <code>.ok</code> drops, updates arrive over the public channel,
+            and this site is the source of truth for everything in the ecosystem.
           </p>
           <div class="hero-actions" aria-label="Primary actions">
             <a class="button primary" href="#games">Download games</a>
-            <a class="button secondary" href="#updates">Track updates</a>
+            <a class="button secondary" href="docs.html">Read the docs</a>
           </div>
         </div>
-        <div class="hero-panel" aria-label="Launch status">
+        <div class="hero-panel" aria-label="Ecosystem status">
           <div>
-            <span class="panel-label">Build</span>
-            <strong>1.0.2 Safe System Update</strong>
+            <span class="panel-label">OS Build</span>
+            <strong id="heroVersion">1.3.0 devlink</strong>
+          </div>
+          <div>
+            <span class="panel-label">Studio</span>
+            <strong>v0.3.0</strong>
           </div>
           <div>
             <span class="panel-label">Catalog</span>
@@ -59,18 +65,68 @@
         </div>
       </section>
 
-      <section class="band intro-band" aria-label="Launch position">
+      <section class="band intro-band" aria-label="Ecosystem position">
         <div class="section-inner intro-grid">
           <div>
-            <p class="eyebrow">Why this matters now</p>
-            <h2>The catalog is early. That is the opportunity.</h2>
+            <p class="eyebrow">One OS, one catalog, one studio</p>
+            <h2>Built for the first wave of controller-first PC games.</h2>
           </div>
           <p>
-            OkamaOS is not another desktop trying to become a console. It boots
-            into a focused game shell, expects a controller, and treats every
-            `.ok` package like a console cartridge. Early players get the first
-            drops. Early creators get the cleanest shelf space.
+            OkamaOS boots into a focused game shell, expects a controller, and
+            treats every <code>.ok</code> package like a console cartridge.
+            Okama Studio lets anyone build and export games in the browser with
+            AI assistance. The catalog is still small — that is the opportunity
+            for early creators and early players alike.
           </p>
+        </div>
+      </section>
+
+      <section class="band" id="ecosystem" aria-labelledby="eco-title">
+        <div class="section-inner">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Full ecosystem</p>
+              <h2 id="eco-title">Everything you need in one place.</h2>
+            </div>
+          </div>
+          <div class="eco-grid">
+            <a class="eco-card" href="docs.html">
+              <span class="eco-card-icon">OS / Docs</span>
+              <h3>Documentation</h3>
+              <p>Architecture, boot sequence, package format, build guide, OTA updates, controllers, and security model.</p>
+              <span class="eco-link">Browse docs &rarr;</span>
+            </a>
+            <a class="eco-card" href="packages.html">
+              <span class="eco-card-icon">Packages</span>
+              <h3>System Packages</h3>
+              <p>Full command reference for <code>okama-cli</code>, <code>okama-pack</code>, <code>okama-update</code>, <code>okama-agent</code>, and the dev console.</p>
+              <span class="eco-link">View packages &rarr;</span>
+            </a>
+            <a class="eco-card" href="studio.html">
+              <span class="eco-card-icon">Studio / IDE</span>
+              <h3>Okama Studio</h3>
+              <p>AI-powered browser game engine. Write Python, run Pyodide, build <code>.ok</code> packages, and host a dev server from any browser.</p>
+              <span class="eco-link">Open Studio &rarr;</span>
+            </a>
+            <a class="eco-card" href="#games">
+              <span class="eco-card-icon">Catalog</span>
+              <h3>Game Catalog</h3>
+              <p>Download controller-first <code>.ok</code> games for your OkamaOS build. Every entry has a manifest, hash, and version badge.</p>
+              <span class="eco-link">Browse games &rarr;</span>
+            </a>
+            <a class="eco-card" href="#updates">
+              <span class="eco-card-icon">Updates</span>
+              <h3>System Updates</h3>
+              <p>OS update bundles (<code>.okupdate</code>), the public JSON feed, release notes, and rollback instructions.</p>
+              <span class="eco-link">Check updates &rarr;</span>
+            </a>
+            <a class="eco-card" href="changelog.html">
+              <span class="eco-card-icon">Changelog</span>
+              <h3>Release History</h3>
+              <p>Full changelog for OS, Studio, and this portal. Filter by component. Every fix, feature, and bump documented.</p>
+              <span class="eco-link">Read changelog &rarr;</span>
+            </a>
+          </div>
         </div>
       </section>
 
@@ -92,8 +148,8 @@
               <h3>Okama Demo Game</h3>
               <p><strong>The first controller-first drop for every fresh OkamaOS build.</strong></p>
               <p class="description">
-                Reference demo game showing sprite movement, pause handling,
-                save state, audio permissions, and clean return to the OkamaOS shell.
+                Reference demo showing sprite movement, pause handling, save
+                state, audio permissions, and clean return to the OkamaOS shell.
               </p>
               <div class="card-meta">
                 <span>v0.1.1</span>
@@ -111,9 +167,10 @@
                 <span class="meta-label">Creator Call</span>
               </div>
               <h3>First Wave Slot</h3>
-              <p><strong>The catalog is still small, which means early games can stand out.</strong></p>
+              <p><strong>The catalog is still small — early games get maximum visibility.</strong></p>
               <p class="description">
                 Reserved listing for the first community-ready OkamaOS game drop.
+                Build with Studio and submit via the catalog process.
               </p>
               <div class="card-meta">
                 <span>v0.0.0</span>
@@ -121,7 +178,7 @@
                 <span>TBD</span>
               </div>
               <div class="download-row">
-                <a class="button primary" href="#" aria-disabled="true">Download .ok</a>
+                <a class="button primary" href="studio.html">Build in Studio</a>
               </div>
             </article>
           </div>
@@ -132,39 +189,41 @@
         <div class="section-inner split-grid">
           <div>
             <p class="eyebrow">Update channel</p>
-            <h2 id="updates-title">Keep every box close to the launch line.</h2>
+            <h2 id="updates-title">Keep every box on the latest build.</h2>
             <p>
-              The public feed gives current users a single place to check what
-              is live, what needs a release asset, and which channel is moving.
-              OS images stay in GitHub Releases; this page keeps the signal
-              clear.
+              The public JSON feed is what OkamaOS devices check for OS and game
+              updates when <code>UPDATE_NOTIFICATIONS=yes</code>. Download a
+              <code>.okupdate</code> bundle directly from here or run
+              <code>okama-update check</code> from the dev console.
+              Rollback is always one command away.
             </p>
             <div class="inline-actions">
               <a class="button primary" href="updates/feed.json">Open update feed</a>
-              <a class="button secondary" href="CHANGELOG.md">Portal changelog</a>
+              <a class="button secondary" href="changelog.html">Full changelog</a>
             </div>
           </div>
           <div class="update-card" id="updateCard" aria-live="polite">
             <span class="status-pill">recommended</span>
-            <h3>1.0.2 Safe System Update</h3>
+            <h3>1.3.0 devlink</h3>
             <p>
-              OkamaOS can now apply repo-hosted system update bundles that
-              replace CLI, shell, runtime, and brand files while preserving
-              games, saves, settings, and update backups.
+              Fixes ZIP <code>.ok</code> installs from Okama Studio, enables
+              key-hold navigation, cleans ANSI codes in the dev console, and
+              adds custom Game Store URL for wireless dev-server game hosting.
             </p>
             <div class="card-meta">
-              <span>2026-04-29</span>
+              <span>2026-05-02</span>
               <span>preview</span>
               <span>bundle-ready</span>
             </div>
             <ul class="update-list">
-              <li>Adds real okama-update apply support for .okupdate system bundles.</li>
-              <li>Backs up replaced system files before applying an update.</li>
-              <li>Preserves games, saves, controllers, logs, cache, and local config.</li>
+              <li>Fix: ZIP packages from Okama Studio now install correctly.</li>
+              <li>Fix: Key-hold navigation auto-repeat now works.</li>
+              <li>Fix: Dev console strips ANSI escape codes.</li>
+              <li>Feature: Custom store URL via X button in Game Store.</li>
             </ul>
             <div class="download-row">
-              <a class="button primary" href="updates/okamaos-v1.0.2.okupdate" download>Download v1 update</a>
-              <a class="button secondary" href="CHANGELOG.md">Release notes</a>
+              <a class="button primary" href="updates/okamaos-v1.3.0.okupdate" download>Download v1.3.0</a>
+              <a class="button secondary" href="changelog.html">Release notes</a>
             </div>
           </div>
         </div>
@@ -179,18 +238,18 @@
           <div class="creator-steps">
             <article>
               <span>01</span>
-              <h3>Build controller-first</h3>
-              <p>Target 30 FPS, clear input, fast exit back to the shell.</p>
+              <h3>Build in Studio</h3>
+              <p>Use Okama Studio's AI agent and 3-panel IDE to write Python + pygame games in the browser — no install needed.</p>
             </article>
             <article>
               <span>02</span>
-              <h3>Package as `.ok`</h3>
-              <p>Use the existing manifest format so installs stay predictable.</p>
+              <h3>Export as <code>.ok</code></h3>
+              <p>The Package Builder tab signs, validates, and downloads your game bundle. Test it wirelessly via the dev server.</p>
             </article>
             <article>
               <span>03</span>
               <h3>Drop into catalog</h3>
-              <p>Every release gets metadata, hashes, and a visible landing spot.</p>
+              <p>Every release gets a manifest, SHA-256 hash, and a visible listing with version and size metadata.</p>
             </article>
           </div>
         </div>
@@ -203,9 +262,12 @@
         <span>Console-grade Linux for low-cost x86_64 PCs.</span>
       </div>
       <nav aria-label="Footer navigation">
-        <a href="README.md">Portal README</a>
-        <a href="catalog/apps.json">Catalog</a>
-        <a href="updates/feed.json">Updates</a>
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="catalog/apps.json">Catalog JSON</a>
+        <a href="updates/feed.json">Update Feed</a>
       </nav>
     </footer>
 

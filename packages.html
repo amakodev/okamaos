@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10120f">
+    <meta name="description"
+      content="OkamaOS system packages — full command reference for okama-cli, okama-pack, okama-update, okama-install, okama-inputd, okama-agent, and the dev console.">
+    <title>OkamaOS | System Packages</title>
+    <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <canvas id="signalCanvas" aria-hidden="true"></canvas>
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="OkamaOS home">
+        <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html" aria-current="page">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="index.html#games">Games</a>
+        <a href="index.html#updates">Updates</a>
+        <a href="changelog.html">Changelog</a>
+      </nav>
+      <a class="header-action" href="updates/feed.json">Feed JSON</a>
+    </header>
+
+    <div class="page-hero">
+      <p class="eyebrow">System Packages</p>
+      <h1>okama-* CLI Reference</h1>
+      <p>Complete command reference for every <code>okama-*</code> system package — from the main admin CLI to the game packager, updater, input daemon, AI agent, and the interactive dev console.</p>
+    </div>
+
+    <main style="padding: clamp(28px,4vw,56px) clamp(20px,4vw,64px); max-width: 1100px; margin: 0 auto;">
+
+      <!-- Quick-access grid -->
+      <div class="pkg-overview-grid">
+        <a class="pkg-quick" href="#okama-cli"><h4>okama-cli</h4><p>Admin CLI — install, run, list, controllers, Bluetooth</p></a>
+        <a class="pkg-quick" href="#okama-pack"><h4>okama-pack</h4><p>Game packager — build, inspect, verify, bundle deps</p></a>
+        <a class="pkg-quick" href="#okama-update"><h4>okama-update</h4><p>OTA system updater — check, apply, rollback</p></a>
+        <a class="pkg-quick" href="#okama-install"><h4>okama-install</h4><p>Hard-drive installer and persistence setup</p></a>
+        <a class="pkg-quick" href="#okama-run"><h4>okama-run</h4><p>Game lifecycle manager — launch, lock, recover</p></a>
+        <a class="pkg-quick" href="#okama-shell"><h4>okama-shell</h4><p>Fullscreen console UI — windowed and dev-mode flags</p></a>
+        <a class="pkg-quick" href="#okama-inputd"><h4>okama-inputd</h4><p>Controller daemon — evdev to unified JSON socket</p></a>
+        <a class="pkg-quick" href="#okama-agent"><h4>okama-agent</h4><p>AI auto-pack agent — one-command game packaging</p></a>
+        <a class="pkg-quick" href="#dev-console"><h4>Dev Console</h4><p>Interactive PTY shell inside the OkamaOS UI</p></a>
+      </div>
+
+      <!-- okama-cli -->
+      <section class="pkg-section" id="okama-cli">
+        <div class="pkg-header">
+          <h2 class="pkg-name">okama-cli</h2>
+          <span class="pkg-badge">Admin CLI</span>
+        </div>
+        <p class="pkg-desc">The main OkamaOS administration tool. Manages installed games, controllers, Bluetooth devices, and system status. Available in both normal mode and developer mode.</p>
+
+        <h3>Status &amp; Info</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-cli status              # print OS version, channel, storage usage
+okama-cli version             # print short version string</pre>
+
+        <h3>Game Management</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-cli install &lt;path&gt;      # install a .ok package from path or URL
+okama-cli list                # list installed games with ID, version, size
+okama-cli run &lt;game-id&gt;       # launch a game by reverse-DNS ID
+okama-cli remove &lt;game-id&gt;    # uninstall a game (backs up first)
+okama-cli info &lt;game-id&gt;      # show manifest and install path for a game</pre>
+        <p>Example:</p>
+        <pre class="code-block">okama-cli install /media/usb/mygame.ok
+okama-cli list
+# com.okamalabs.demo    v0.1.1   13 KB
+# com.mypub.mygame      v1.0.0   840 KB
+
+okama-cli run com.okamalabs.demo
+okama-cli remove com.mypub.mygame</pre>
+
+        <h3>Controller Commands</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-cli controllers list            # list connected and paired controllers
+okama-cli controllers test            # stream live input events (Ctrl+C to stop)
+okama-cli controllers default &lt;id&gt;   # set preferred controller by index</pre>
+
+        <h3>Bluetooth Commands</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-cli bluetooth status            # check adapter power state
+okama-cli bluetooth scan              # scan 15 s, print found devices
+okama-cli bluetooth pair &lt;mac&gt;        # pair device; auto-trusts
+okama-cli bluetooth trust &lt;mac&gt;       # mark device as trusted
+okama-cli bluetooth connect &lt;mac&gt;     # connect immediately
+okama-cli bluetooth disconnect &lt;mac&gt;  # disconnect without forgetting
+okama-cli bluetooth forget &lt;mac&gt;      # remove from paired list</pre>
+
+        <h3>Update Subcommands</h3>
+        <p>Quick aliases — full control is via <code>okama-update</code>:</p>
+        <pre class="code-block">okama-cli update check        # check for latest OS update
+okama-cli update list         # list downloaded .okupdate bundles</pre>
+      </section>
+
+      <!-- okama-pack -->
+      <section class="pkg-section" id="okama-pack">
+        <div class="pkg-header">
+          <h2 class="pkg-name">okama-pack</h2>
+          <span class="pkg-badge">Game Packager</span>
+        </div>
+        <p class="pkg-desc">Builds, inspects, verifies, and bundles <code>.ok</code> game packages. Use on your development machine to package games before distributing or testing on a device. Okama Studio uses a browser-native equivalent (JSZip).</p>
+
+        <h3>Build a Package</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block"># Auto-detect entry and runtime from directory
+okama-pack build ./games/mygame
+
+# Explicit output path
+okama-pack build ./games/mygame --output mygame.ok</pre>
+        <p>The tool reads <code>manifest.ok.json</code> from the game directory. If no manifest exists, use <code>okama-agent auto-pack</code> to generate one automatically.</p>
+
+        <h3>Inspect Contents</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-pack inspect mygame.ok   # list archive contents + manifest summary</pre>
+
+        <h3>Verify a Package</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-pack verify mygame.ok    # validate manifest fields and archive integrity</pre>
+        <p>Exits 0 on success. Prints each failing rule on error.</p>
+
+        <h3>Bundle Python Dependencies</h3>
+        <p>Use <code>bundle</code> to pip-install <code>python_deps</code> from the manifest into the game's <code>site-packages/</code> directory for fully self-contained packaging:</p>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-pack bundle ./games/mygame   # installs python_deps into site-packages/
+okama-pack build ./games/mygame    # then build the self-contained .ok</pre>
+      </section>
+
+      <!-- okama-update -->
+      <section class="pkg-section" id="okama-update">
+        <div class="pkg-header">
+          <h2 class="pkg-name">okama-update</h2>
+          <span class="pkg-badge">OTA Updater</span>
+        </div>
+        <p class="pkg-desc">Checks for, downloads, applies, and rolls back OS update bundles (<code>.okupdate</code>). Every apply backs up replaced files before writing new ones. User data is never touched.</p>
+
+        <h3>Check for Updates</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-update check
+# Fetches updates/feed.json from STORE_URL (default: this portal)
+# Prints: current version, latest version, and download URL if newer</pre>
+
+        <h3>Apply an Update</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block"># Dry run first — inspect every file that will be replaced
+okama-update apply --dry-run okamaos-v1.3.0.okupdate
+
+# Apply with SHA-256 verification (recommended)
+okama-update apply --sha256 7311537148ec04ca436bb21fd31ee115a412fcd33cc9a2c3420077b46928666b \
+  okamaos-v1.3.0.okupdate
+
+# Apply without hash check (dev use only)
+okama-update apply okamaos-v1.3.0.okupdate</pre>
+        <p>Allowed update targets: <code>usr/bin/okama-*</code>, <code>usr/lib/okamaos/</code>, <code>usr/share/okamaos/</code>, <code>etc/init.d/S*</code>, boot assets. Everything else is refused.</p>
+
+        <h3>Rollback</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-update rollback          # restore the most recent pre-apply backup</pre>
+        <p>Backups are stored under <code>/var/okamaos/updates/backups/</code> with timestamps.</p>
+      </section>
+
+      <!-- okama-install -->
+      <section class="pkg-section" id="okama-install">
+        <div class="pkg-header">
+          <h2 class="pkg-name">okama-install</h2>
+          <span class="pkg-badge">Disk Installer</span>
+        </div>
+        <p class="pkg-desc">Installs OkamaOS to a hard drive or sets up live USB persistence. Always prompts for confirmation before writing. Use <code>--dry-run</code> to preview every action before committing.</p>
+
+        <h3>Hard-Drive Install</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block"># Interactive install to /dev/sda (replace with your target device)
+okama-install --target /dev/sda --dry-run   # preview first
+okama-install --target /dev/sda --yes       # write after confirmation</pre>
+        <p><strong>Warning:</strong> this overwrites the entire target device. Run <code>lsblk</code> first to confirm the correct device path.</p>
+
+        <h3>Live USB Persistence</h3>
+        <p>Creates an <code>OKAMA_DATA</code> ext4 partition on an attached drive. On next boot the system mounts it at <code>/var/okamaos</code>, preserving games, saves, and config across reboots:</p>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-install --make-persistence /dev/sdXN --dry-run
+okama-install --make-persistence /dev/sdXN --yes</pre>
+
+        <h3>Check Persistence Status</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-install --persistence-status
+# Reports: mounted persistence partition (if any), path, and size</pre>
+      </section>
+
+      <!-- okama-run -->
+      <section class="pkg-section" id="okama-run">
+        <div class="pkg-header">
+          <h2 class="pkg-name">okama-run</h2>
+          <span class="pkg-badge">Game Launcher</span>
+        </div>
+        <p class="pkg-desc">The game lifecycle manager. Called by <code>okama-shell</code> when a user selects a game. Acquires the game lock, validates the manifest, suspends non-essential services, launches the game process, and recovers on crash.</p>
+
+        <h3>Manual Launch</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-run &lt;game-id&gt;
+# Example:
+okama-run com.okamalabs.demo</pre>
+
+        <h3>Launch Sequence</h3>
+        <ul>
+          <li>Acquires <code>/var/run/okama-game.lock</code></li>
+          <li>Validates <code>manifest.ok.json</code> (runtime, permissions, etc.)</li>
+          <li>Checks controller requirement (rejects if <code>controller_required=true</code> and no gamepad found)</li>
+          <li>Suspends non-essential background services</li>
+          <li>Launches: <code>python3 &lt;entry&gt;</code> in fullscreen SDL2 mode</li>
+          <li>On exit or crash: releases lock, resumes services, restores shell</li>
+        </ul>
+
+        <h3>Environment Injected into Games</h3>
+        <pre class="code-block">PYTHONPATH   ← game's site-packages/ + lib/ + system /usr/lib/okamaos
+OKAMA_GAME_ID ← reverse-DNS ID
+OKAMA_SAVE_DIR ← /var/okamaos/saves/&lt;game-id&gt;
+OKAMA_DATA_DIR ← /var/okamaos/games/&lt;game-id&gt;</pre>
+      </section>
+
+      <!-- okama-shell -->
+      <section class="pkg-section" id="okama-shell">
+        <div class="pkg-header">
+          <h2 class="pkg-name">okama-shell</h2>
+          <span class="pkg-badge">Console UI</span>
+        </div>
+        <p class="pkg-desc">The fullscreen SDL2/Pygame controller UI. Normally started by <code>S99okama-shell</code> on tty1 at boot. Respawns automatically on crash. Exposes Play, Settings (Controllers, Bluetooth, Audio, Network, Storage, Updates, Developer), and Power sections.</p>
+
+        <h3>Developer Flags (host / dev mode)</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-shell --windowed         # run in a desktop window (host dev)
+okama-shell --no-controller    # allow keyboard-only mode
+okama-shell --loglevel debug   # verbose logging to stdout</pre>
+
+        <h3>Settings Sections</h3>
+        <table class="doc-table">
+          <thead><tr><th>Section</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td>Controllers</td><td>List USB/BT controllers, pair new, set default</td></tr>
+            <tr><td>Bluetooth</td><td>Power toggle, scan, pair/trust/connect</td></tr>
+            <tr><td>Audio</td><td>Interactive volume slider, saves to config + calls amixer</td></tr>
+            <tr><td>Network</td><td>Live interface/IP display, Wi-Fi toggle</td></tr>
+            <tr><td>Storage</td><td>Disk usage, per-game install sizes</td></tr>
+            <tr><td>Updates</td><td>OS version, remote check, local .okupdate scanner</td></tr>
+            <tr><td>Game Store</td><td>Browse remote catalog, one-press download+install; X button for custom store URL</td></tr>
+            <tr><td>Developer</td><td>Enable dev mode (PIN-protected), access Dev Console</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- okama-inputd -->
+      <section class="pkg-section" id="okama-inputd">
+        <div class="pkg-header">
+          <h2 class="pkg-name">okama-inputd</h2>
+          <span class="pkg-badge">Input Daemon</span>
+        </div>
+        <p class="pkg-desc">The central controller daemon. Runs as a background service (<code>S30okama-inputd</code>). All consumers — shell and games — read from a single Unix socket. No game code ever touches evdev directly.</p>
+
+        <h3>Socket</h3>
+        <pre class="code-block">/run/okama-inputd.sock   ← newline-delimited JSON event stream</pre>
+
+        <h3>CLI Flags</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-inputd               # normal daemon mode (started by init)
+okama-inputd --test        # print live events to stdout (dev/debug)
+okama-inputd --list        # list detected /dev/input/event* devices</pre>
+
+        <h3>Controller Profile Lookup Order</h3>
+        <ul>
+          <li>Exact vendor+product match from <code>/etc/okamaos/controller-profiles.json</code></li>
+          <li>Bus-type match (usb / bluetooth)</li>
+          <li><code>generic-usb-hid</code> fallback (covers most standard HID gamepads)</li>
+        </ul>
+
+        <h3>Axis Dead Zone</h3>
+        <p>Axis values within <code>&plusmn;0.08</code> are zeroed before broadcast to prevent drift noise from reaching games and the shell.</p>
+
+        <h3>Testing Controllers</h3>
+        <span class="code-label">dev console</span>
+        <pre class="code-block">okama-inputd --test          # stream all unified events
+okama-cli controllers list   # show detected gamepads
+okama-cli controllers test   # alias for above</pre>
+      </section>
+
+      <!-- okama-agent -->
+      <section class="pkg-section" id="okama-agent">
+        <div class="pkg-header">
+          <h2 class="pkg-name">okama-agent</h2>
+          <span class="pkg-badge">AI Agent</span>
+        </div>
+        <p class="pkg-desc">Command-line AI agent for automating game packaging. The <code>auto-pack</code> subcommand analyses any game directory, auto-detects entry point, runtime, and dependencies, generates a manifest, bundles deps, and produces a ready-to-install <code>.ok</code> in one command.</p>
+
+        <h3>Auto-Pack a Game</h3>
+        <span class="code-label">usage</span>
+        <pre class="code-block">okama-agent auto-pack ./path/to/mygame
+# Detects: main.py / game.py / index.html as entry point
+# Parses:  requirements.txt / pyproject.toml / setup.py for deps
+# Infers:  runtime from pygame/sdl2 imports
+# Writes:  manifest.ok.json (if missing), builds mygame.ok</pre>
+
+        <h3>What auto-pack detects</h3>
+        <ul>
+          <li>Entry point: scans for <code>main.py</code>, <code>game.py</code>, <code>index.html</code></li>
+          <li>Runtime: <code>okama-sdl2</code> if pygame/sdl2 found, else <code>okama-python</code></li>
+          <li>Python deps: parsed from <code>requirements.txt</code>, <code>pyproject.toml</code>, or <code>setup.py</code></li>
+          <li>Target FPS: inferred from <code>clock.tick(N)</code> calls</li>
+        </ul>
+
+        <h3>Okama Studio Integration</h3>
+        <p>Okama Studio (browser IDE) includes a full agentic AI that can call 9 tools: <code>write_file</code>, <code>read_file</code>, <code>delete_file</code>, <code>list_files</code>, <code>search_files</code>, <code>commit</code>, <code>create_branch</code>, <code>create_issue</code>, and <code>run_preview</code>. See <a href="studio.html">Studio docs</a> for the full tool reference.</p>
+      </section>
+
+      <!-- Dev Console -->
+      <section class="pkg-section" id="dev-console">
+        <div class="pkg-header">
+          <h2 class="pkg-name">Dev Console</h2>
+          <span class="pkg-badge">Developer Mode</span>
+        </div>
+        <p class="pkg-desc">The interactive developer console is a PTY-backed persistent shell session embedded in the OkamaOS Settings &rarr; Developer screen. Available only in developer mode. Supports long-running commands, interactive prompts (<code>okama-install</code>, etc.), and streaming output.</p>
+
+        <h3>Enabling Dev Mode</h3>
+        <p>Navigate to Settings &rarr; Developer in <code>okama-shell</code>. Enter the parent PIN to enable. Once active, the Dev Console tab appears and <code>tty2</code> is unlocked.</p>
+
+        <h3>Console Behaviour</h3>
+        <ul>
+          <li>PTY-backed — interactive commands work (no stdin stall)</li>
+          <li>Long-running command progress streams in real time</li>
+          <li>ANSI escape codes stripped (<code>TERM=dumb</code>, <code>NO_COLOR=1</code>)</li>
+          <li>Long input tail-scrolls with <code>&hellip;</code> prefix</li>
+        </ul>
+
+        <h3>Useful Dev Console Commands</h3>
+        <span class="code-label">dev console</span>
+        <pre class="code-block"># System info
+okama-cli status
+cat /etc/okamaos/okama.conf
+free -m
+df -h /var/okamaos
+
+# Game management
+okama-cli list
+okama-cli install /media/usb/mygame.ok
+okama-cli remove com.mypub.mygame
+
+# OS updates
+okama-update check
+okama-update apply --dry-run /var/okamaos/updates/downloads/okamaos-v1.3.0.okupdate
+okama-update apply okamaos-v1.3.0.okupdate
+okama-update rollback
+
+# Controllers
+okama-inputd --test
+okama-cli controllers list
+okama-cli bluetooth scan
+okama-cli bluetooth pair AA:BB:CC:DD:EE:FF
+
+# Logs
+cat /var/okamaos/logs/shell.log
+cat /var/okamaos/logs/game-crash.log
+journalctl -n 50   # if systemd is available
+
+# Persistence / install
+okama-install --persistence-status
+lsblk</pre>
+
+        <h3>Accessing tty2</h3>
+        <p>With developer mode active, press <kbd>Ctrl+Alt+F2</kbd> (or equivalent) to switch to tty2, which runs a standard BusyBox getty shell. Return to the UI with <kbd>Ctrl+Alt+F1</kbd>.</p>
+
+        <h3>Running okama-install from the Console</h3>
+        <p>Because the console is PTY-backed, <code>okama-install</code>'s interactive confirmation prompts work correctly. Type your response when prompted:</p>
+        <pre class="code-block">okama-install --target /dev/sdb --dry-run
+# Review output, then:
+okama-install --target /dev/sdb --yes</pre>
+      </section>
+
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <img class="footer-logo" src="assets/okama-logo.svg" width="160" height="46" alt="OkamaOS">
+        <span>Console-grade Linux for low-cost x86_64 PCs.</span>
+      </div>
+      <nav aria-label="Footer navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="catalog/apps.json">Catalog JSON</a>
+        <a href="updates/feed.json">Update Feed</a>
+      </nav>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

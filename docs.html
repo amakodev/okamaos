@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10120f">
+    <meta name="description"
+      content="OkamaOS documentation — architecture, build guide, .ok package format, OTA updates, controller input, Bluetooth, and security model.">
+    <title>OkamaOS | Documentation</title>
+    <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <canvas id="signalCanvas" aria-hidden="true"></canvas>
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="OkamaOS home">
+        <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="docs.html" aria-current="page">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="index.html#games">Games</a>
+        <a href="index.html#updates">Updates</a>
+        <a href="changelog.html">Changelog</a>
+      </nav>
+      <a class="header-action" href="updates/feed.json">Feed JSON</a>
+    </header>
+
+    <div class="page-hero">
+      <p class="eyebrow">Documentation</p>
+      <h1>OkamaOS Reference</h1>
+      <p>Architecture, boot sequence, package format, build guide, OTA updates, controller input, Bluetooth, and security boundaries — everything a developer or contributor needs.</p>
+    </div>
+
+    <div class="docs-wrap">
+      <aside class="docs-sidebar" aria-label="Documentation navigation">
+        <nav class="docs-nav" aria-label="Docs sections">
+          <span class="docs-nav-label">OS Core</span>
+          <a href="#overview">Overview</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#boot">Boot Sequence</a>
+          <a href="#filesystem">Filesystem Layout</a>
+          <span class="docs-nav-label">Games</span>
+          <a href="#package-format">Package Format (.ok)</a>
+          <a href="#manifest-schema">Manifest Schema</a>
+          <a href="#runtimes">Runtime IDs</a>
+          <span class="docs-nav-label">Development</span>
+          <a href="#build-guide">Build Guide</a>
+          <a href="#host-dev">Host Development</a>
+          <a href="#makefile">Makefile Reference</a>
+          <span class="docs-nav-label">System</span>
+          <a href="#ota-updates">OTA Updates</a>
+          <a href="#controllers">Controller Input</a>
+          <a href="#bluetooth">Bluetooth</a>
+          <a href="#security">Security Model</a>
+        </nav>
+      </aside>
+
+      <main class="docs-main">
+
+        <!-- Overview -->
+        <section class="doc-section" id="overview">
+          <p class="eyebrow">Introduction</p>
+          <h2>What is OkamaOS?</h2>
+          <p>OkamaOS is a <strong>controller-first Linux console OS</strong> built on Buildroot for x86_64 low-cost PCs. It replaces the conventional Linux desktop stack with a single-purpose game console loop — no desktop, no window manager, no terminal in normal mode.</p>
+          <p>The system boots directly into <code>okama-shell</code>, a fullscreen SDL2/Pygame UI. Games are installed as <code>.ok</code> packages — self-contained tar archives with a typed manifest. Updates arrive as <code>.okupdate</code> bundles served from this portal's public JSON feed.</p>
+          <h3>Key Principles</h3>
+          <ul>
+            <li><strong>Controller is primary.</strong> Keyboard allowed only for text entry and emergency navigation.</li>
+            <li><strong>One game at a time.</strong> Lock file prevents concurrent game processes.</li>
+            <li><strong>No desktop.</strong> No X11, no Wayland, no compositor, no WM.</li>
+            <li><strong>Games get priority.</strong> Non-essential services suspended on launch.</li>
+            <li><strong><code>.ok</code> packages are cartridges.</strong> Install, run, remove — predictable lifecycle.</li>
+            <li><strong>Public update channel.</strong> All OS and game updates verifiable via SHA-256 hashes.</li>
+          </ul>
+          <h3>Supported Hardware</h3>
+          <p>Target: x86_64 PCs with 256 MB+ RAM, USB or Bluetooth gamepad, HDMI/VGA display, and optionally Wi-Fi. Live USB boot or hard-drive install via <code>okama-install</code>. Tested in QEMU and on physical x86_64 hardware.</p>
+        </section>
+
+        <!-- Architecture -->
+        <section class="doc-section" id="architecture">
+          <p class="eyebrow">System Design</p>
+          <h2>Architecture</h2>
+          <p>OkamaOS consists of four main layers: the Buildroot-compiled kernel and rootfs, the init system and services, the <code>okama-shell</code> UI, and the game runtime.</p>
+          <h3>Component Map</h3>
+          <table class="doc-table">
+            <thead><tr><th>Component</th><th>Role</th><th>Est. RSS</th></tr></thead>
+            <tbody>
+              <tr><td><code>okama-shell</code></td><td>Fullscreen SDL2/Pygame game console UI</td><td>~70 MB</td></tr>
+              <tr><td><code>okama-run</code></td><td>Game lifecycle manager — launch, lock, recover</td><td>&lt;5 MB</td></tr>
+              <tr><td><code>okama-cli</code></td><td>Admin and debug CLI</td><td>&lt;5 MB</td></tr>
+              <tr><td><code>okama-inputd</code></td><td>Controller daemon, evdev &rarr; JSON socket</td><td>~12 MB</td></tr>
+              <tr><td><code>bluetoothd</code></td><td>BlueZ 5 stack (started only when needed)</td><td>~30 MB</td></tr>
+              <tr><td><code>dhcpcd</code></td><td>DHCP client for network</td><td>~3 MB</td></tr>
+              <tr><td>kernel + drivers</td><td>HID, DRM, ALSA, USB, Bluetooth</td><td>~60 MB</td></tr>
+              <tr><td><strong>Total idle</strong></td><td>Well under 250 MB budget</td><td><strong>~185 MB</strong></td></tr>
+            </tbody>
+          </table>
+          <h3>Key Invariants</h3>
+          <ul>
+            <li>One game at a time: <code>/var/run/okama-game.lock</code></li>
+            <li>No desktop: no X11, no Wayland, no compositor</li>
+            <li>No terminal in normal mode: tty2 getty only in developer mode</li>
+            <li>Games get scheduling priority; non-essential services suspended on launch</li>
+          </ul>
+        </section>
+
+        <!-- Boot Sequence -->
+        <section class="doc-section" id="boot">
+          <p class="eyebrow">Startup</p>
+          <h2>Boot Sequence</h2>
+          <pre class="code-block">UEFI/BIOS firmware
+       ↓
+  SYSLINUX (hidden, no menu in normal mode)
+       ↓
+  Linux 6.6 kernel (quiet, loglevel=0)
+       ↓
+  BusyBox init  →  /etc/inittab  →  /etc/init.d/rcS
+       ↓
+  S10okama-mounts   (proc, sys, devtmpfs, tmpfs /run)
+  S20okama-devices  (eudev or mdev)
+  S25okama-bluetooth (only if enabled or paired controllers exist)
+  S30okama-inputd   (controller daemon → /run/okama-inputd.sock)
+  S35okama-audio    (ALSA init, master unmute)
+  S40okama-network  (DHCP, optional WiFi — skipped if disabled)
+  S99okama-shell    (okama-shell on tty1, respawn on crash)
+       ↓
+  okama-shell  (fullscreen SDL2/Pygame controller UI)
+       ↓
+  [user selects game]  →  okama-run  →  game process
+       ↓
+  [game exits / crashes]  →  okama-run recovers  →  okama-shell resumes</pre>
+          <h3>Silent Boot</h3>
+          <p>Kernel uses <code>quiet loglevel=0</code>. Init.d output is redirected to a boot log (<code>/var/log/okama-boot.log</code>). The user sees only the Pygame splash, then the shell.</p>
+          <h3>Live USB Persistence</h3>
+          <p>If a partition labelled <code>OKAMA_DATA</code> exists on any attached storage, early boot mounts it at <code>/var/okamaos</code>. This enables live USB builds that persist games, saves, and config across reboots without a full hard-drive install.</p>
+        </section>
+
+        <!-- Filesystem -->
+        <section class="doc-section" id="filesystem">
+          <p class="eyebrow">Storage</p>
+          <h2>Filesystem Layout</h2>
+          <pre class="code-block">/                          (read-only rootfs — v1 target)
+├── etc/okamaos/           OS config (okama.conf, parent.conf, devmode.conf)
+├── usr/bin/               okama-* binaries (Python scripts)
+├── usr/lib/okamaos/       shared Python library (okamaos.*)
+├── usr/share/okamaos/     themes, templates, assets, controller-icons
+└── var/okamaos/           (read-write data partition)
+    ├── games/             installed .ok packages (extracted)
+    ├── saves/             per-game save_state.json
+    ├── logs/              shell, game, crash logs
+    ├── cache/             download cache
+    ├── controllers/       paired Bluetooth controller profiles (.json)
+    └── updates/           staged OTA update bundles and backups</pre>
+          <h3>Config File: <code>/etc/okamaos/okama.conf</code></h3>
+          <p>Key configuration values read by all <code>okama-*</code> tools:</p>
+          <table class="doc-table">
+            <thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>UPDATE_NOTIFICATIONS</code></td><td><code>yes</code></td><td>Enable periodic update checks</td></tr>
+              <tr><td><code>BLUETOOTH_ENABLED</code></td><td><code>no</code></td><td>Start bluetoothd on boot</td></tr>
+              <tr><td><code>STORE_URL</code></td><td>(portal URL)</td><td>Game Store catalog source</td></tr>
+              <tr><td><code>DEV_MODE</code></td><td><code>no</code></td><td>Enable developer mode (tty2, unsigned packages)</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- Package Format -->
+        <section class="doc-section" id="package-format">
+          <p class="eyebrow">Game Packaging</p>
+          <h2>The .ok Package Format</h2>
+          <p><code>.ok</code> files are <strong>ZIP or tar+gzip archives</strong> with the <code>.ok</code> extension. Okama Studio exports ZIP-format packages. The runtime auto-detects format via magic bytes.</p>
+          <pre class="code-block">game.ok
+├── manifest.ok.json        ← required
+├── main.py                 ← entry point (or path from manifest "entry")
+├── assets/                 ← optional (images, sounds)
+├── icon.png                ← optional (128×128 game icon)
+├── banner.png              ← optional (460×215 store banner)
+├── controller.json         ← optional (button layout hints)
+├── save_hook.py            ← optional (save/restore hooks)
+└── site-packages/          ← optional (bundled pip deps)</pre>
+        </section>
+
+        <!-- Manifest Schema -->
+        <section class="doc-section" id="manifest-schema">
+          <p class="eyebrow">Manifest</p>
+          <h2>manifest.ok.json Schema</h2>
+          <pre class="code-block">{
+  "name":               "My Game",
+  "id":                 "com.publisher.mygame",
+  "version":            "1.0.0",
+  "runtime":            "okama-sdl2",
+  "entry":              "main.py",
+  "min_ram_mb":         64,
+  "target_fps":         30,
+  "permissions":        ["controller", "audio", "save_data"],
+  "age_rating":         "Everyone",
+  "supports_save_state": true,
+  "controller_required": true,
+  "keyboard_usage":     "none",
+  "description":        "Short description shown in the shell."
+}</pre>
+          <h3>Validation Rules</h3>
+          <table class="doc-table">
+            <thead><tr><th>Rule</th><th>Effect on failure</th></tr></thead>
+            <tbody>
+              <tr><td>Missing required field</td><td>Reject install</td></tr>
+              <tr><td>ID not reverse-DNS (lowercase, dots)</td><td>Reject install</td></tr>
+              <tr><td>Runtime not in supported list</td><td>Reject install</td></tr>
+              <tr><td>Age rating not in {Everyone, Teen, Mature}</td><td>Reject install</td></tr>
+              <tr><td>Unknown permission name</td><td>Reject install</td></tr>
+              <tr><td><code>controller_required = false</code> outside dev mode</td><td>Reject install</td></tr>
+              <tr><td>Entry path contains <code>..</code> or starts with <code>/</code></td><td>Reject install</td></tr>
+              <tr><td>Path traversal in archive members</td><td>Reject on extract</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- Runtimes -->
+        <section class="doc-section" id="runtimes">
+          <p class="eyebrow">Execution</p>
+          <h2>Runtime IDs</h2>
+          <table class="doc-table">
+            <thead><tr><th>Runtime ID</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>okama-lite</code></td><td>Python 3, no graphics — logic or CLI games</td></tr>
+              <tr><td><code>okama-python</code></td><td>Python 3 + pygame, standard launch</td></tr>
+              <tr><td><code>okama-sdl2</code></td><td>Python 3 + pygame + full SDL2 feature set (recommended)</td></tr>
+            </tbody>
+          </table>
+          <p>v1 will add <code>okama-native</code> for compiled C/C++/Rust games. Okama Studio generates <code>okama-sdl2</code> manifests by default.</p>
+        </section>
+
+        <!-- Build Guide -->
+        <section class="doc-section" id="build-guide">
+          <p class="eyebrow">Building OkamaOS</p>
+          <h2>Build Guide</h2>
+          <h3>Prerequisites</h3>
+          <table class="doc-table">
+            <thead><tr><th>Tool</th><th>Minimum</th><th>Install</th></tr></thead>
+            <tbody>
+              <tr><td>git</td><td>2.x</td><td><code>apt install git</code></td></tr>
+              <tr><td>make</td><td>3.82+</td><td><code>apt install make</code></td></tr>
+              <tr><td>gcc / g++</td><td>10+</td><td><code>apt install build-essential</code></td></tr>
+              <tr><td>Python 3</td><td>3.10+</td><td><code>apt install python3</code></td></tr>
+              <tr><td>QEMU</td><td>7+</td><td><code>apt install qemu-system-x86</code></td></tr>
+              <tr><td>Buildroot extras</td><td>—</td><td><code>apt install libncurses-dev bison flex libssl-dev bc file unzip cpio rsync</code></td></tr>
+            </tbody>
+          </table>
+          <h3>Step-by-Step</h3>
+          <span class="code-label">bash</span>
+          <pre class="code-block"># 1. Clone the repo
+git clone &lt;okamaos-repo-url&gt; okamaos
+cd okamaos
+
+# 2. Set up Buildroot (clones BR 2024.02.10 into ./buildroot/)
+make setup
+
+# 3. Apply OkamaOS defconfig
+make buildroot
+
+# 4. Full build (1–3 hours first run, 2–20 min incremental)
+make okamaos-build
+
+# 5. Run in QEMU (2 GB RAM, 2 vCPUs, virtio-blk)
+make okamaos-run-qemu
+
+# 6. Build the demo game package
+make package-demo
+# Output: build/demo.ok</pre>
+          <h3>Inside QEMU / on device</h3>
+          <span class="code-label">bash</span>
+          <pre class="code-block">okama-cli install /path/to/demo.ok
+okama-cli list
+okama-cli run com.okamalabs.demo</pre>
+        </section>
+
+        <!-- Host Development -->
+        <section class="doc-section" id="host-dev">
+          <p class="eyebrow">Development</p>
+          <h2>Host Development (no Buildroot)</h2>
+          <p>All <code>okama-*</code> tools are plain Python 3 scripts. Run them on any Linux host with Python 3.10+:</p>
+          <span class="code-label">bash</span>
+          <pre class="code-block">export PYTHONPATH=$PWD/usr/lib
+export OKAMA_CONF=$PWD/board/okamaos/rootfs-overlay/etc/okamaos/okama.conf
+
+# Run the admin CLI
+./usr/bin/okama-cli status
+
+# Build and verify a .ok package
+./usr/bin/okama-pack build games/demo --output /tmp/demo.ok
+./usr/bin/okama-pack verify /tmp/demo.ok
+
+# Run the shell in a host window (requires pygame)
+pip install pygame
+PYTHONPATH=$PWD/usr/lib ./usr/bin/okama-shell --windowed</pre>
+        </section>
+
+        <!-- Makefile Reference -->
+        <section class="doc-section" id="makefile">
+          <p class="eyebrow">Build Targets</p>
+          <h2>Makefile Reference</h2>
+          <table class="doc-table">
+            <thead><tr><th>Target</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>make setup</code></td><td>Clone Buildroot into <code>./buildroot</code></td></tr>
+              <tr><td><code>make buildroot</code></td><td>Configure Buildroot with OkamaOS defconfig</td></tr>
+              <tr><td><code>make okamaos-build</code></td><td>Full build: kernel + rootfs + userland</td></tr>
+              <tr><td><code>make okamaos-run-qemu</code></td><td>Boot latest image in QEMU</td></tr>
+              <tr><td><code>make okamaos-clean</code></td><td>Clean Buildroot output and <code>./build</code></td></tr>
+              <tr><td><code>make package-demo</code></td><td>Build <code>games/demo</code> → <code>build/demo.ok</code></td></tr>
+              <tr><td><code>make memory-test</code></td><td>Run RAM budget check inside QEMU</td></tr>
+              <tr><td><code>make controller-test</code></td><td>Enumerate controllers and stream events</td></tr>
+              <tr><td><code>make naming-check</code></td><td>Fail if "akama" misspelling is found anywhere</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- OTA Updates -->
+        <section class="doc-section" id="ota-updates">
+          <p class="eyebrow">System Updates</p>
+          <h2>OTA Updates &amp; Rollback</h2>
+          <p>OkamaOS uses this portal (GitHub Pages) as its public update source. Devices check <code>https://zyntrixsolutions.github.io/okamaos/updates/feed.json</code> when <code>UPDATE_NOTIFICATIONS=yes</code>.</p>
+          <h3>Manual Update Check</h3>
+          <span class="code-label">dev console</span>
+          <pre class="code-block">okama-update check</pre>
+          <h3>Apply an Update</h3>
+          <p>Download the <code>.okupdate</code> bundle from this page's Updates section, then apply it. Protected user data (games, saves, controllers, config) is never touched.</p>
+          <span class="code-label">dev console</span>
+          <pre class="code-block"># Dry run first — inspect what will be replaced
+okama-update apply --dry-run okamaos-v1.3.0.okupdate
+
+# Apply with hash verification
+okama-update apply --sha256 7311537148ec04ca436bb21fd31ee115a412fcd33cc9a2c3420077b46928666b okamaos-v1.3.0.okupdate</pre>
+          <h3>Rollback</h3>
+          <p>Every non-dry apply writes a backup under <code>/var/okamaos/updates/backups/</code>. Rollback restores the latest backup:</p>
+          <span class="code-label">dev console</span>
+          <pre class="code-block">okama-update rollback</pre>
+          <h3>Protected Paths (never overwritten)</h3>
+          <ul>
+            <li><code>/var/okamaos/games</code> — installed games</li>
+            <li><code>/var/okamaos/saves</code> — game save data</li>
+            <li><code>/var/okamaos/controllers</code> — Bluetooth controller profiles</li>
+            <li><code>/var/okamaos/updates</code> — update history and backups</li>
+            <li>Parent PIN config, developer config, Wi-Fi credentials</li>
+          </ul>
+        </section>
+
+        <!-- Controllers -->
+        <section class="doc-section" id="controllers">
+          <p class="eyebrow">Input System</p>
+          <h2>Controller Input</h2>
+          <p><code>okama-inputd</code> is the central controller daemon. It scans <code>/dev/input/event*</code> every 2 seconds, spawns one reader thread per device, translates raw evdev events through <code>controller-profiles.json</code>, and broadcasts unified JSON events over a Unix socket.</p>
+          <h3>Unified Button Protocol</h3>
+          <pre class="code-block">{"type": "button", "button": "A",       "state": "pressed",  "controller": 0}
+{"type": "button", "button": "DPAD_UP", "state": "released", "controller": 0}
+{"type": "axis",   "axis":  "LSTICK_X", "value": -0.87,      "controller": 0}
+{"type": "connect",    "controller": 0, "name": "Xbox Controller", "bus": "usb"}
+{"type": "disconnect", "controller": 0}</pre>
+          <h3>Canonical Button Names</h3>
+          <table class="doc-table">
+            <thead><tr><th>Okama</th><th>Xbox</th><th>PlayStation</th></tr></thead>
+            <tbody>
+              <tr><td><code>A</code></td><td>A</td><td>Cross</td></tr>
+              <tr><td><code>B</code></td><td>B</td><td>Circle</td></tr>
+              <tr><td><code>X</code></td><td>X</td><td>Square</td></tr>
+              <tr><td><code>Y</code></td><td>Y</td><td>Triangle</td></tr>
+              <tr><td><code>L1 / R1</code></td><td>LB / RB</td><td>L1 / R1</td></tr>
+              <tr><td><code>L2 / R2</code></td><td>LT / RT</td><td>L2 / R2</td></tr>
+              <tr><td><code>START</code></td><td>Start/Menu</td><td>Options</td></tr>
+              <tr><td><code>SELECT</code></td><td>Back/View</td><td>Share/Create</td></tr>
+              <tr><td><code>DPAD_UP/DOWN/LEFT/RIGHT</code></td><td>D-pad</td><td>D-pad</td></tr>
+            </tbody>
+          </table>
+          <h3>Shell Navigation Conventions</h3>
+          <table class="doc-table">
+            <thead><tr><th>UI Action</th><th>Controller Input</th></tr></thead>
+            <tbody>
+              <tr><td>Move cursor</td><td>D-pad or LSTICK</td></tr>
+              <tr><td>Select / OK</td><td>A</td></tr>
+              <tr><td>Back</td><td>B</td></tr>
+              <tr><td>Home</td><td>START or HOME</td></tr>
+              <tr><td>Quick menu</td><td>SELECT</td></tr>
+              <tr><td>Tab left / right</td><td>L1 / R1</td></tr>
+              <tr><td>Page up / down</td><td>L2 / R2</td></tr>
+            </tbody>
+          </table>
+          <h3>InputClient API (for game developers)</h3>
+          <span class="code-label">python</span>
+          <pre class="code-block">from okamaos.input_protocol import InputClient
+
+client = InputClient()
+if not client.connect():
+    pass  # okama-inputd not running — use pygame.joystick fallback
+
+while game_running:
+    for event in client.poll():
+        if event["type"] == "button" and event["state"] == "pressed":
+            if event["button"] == "A":
+                do_select()
+        elif event["type"] == "axis":
+            move_player(event["axis"], event["value"])
+# InputClient.poll() is non-blocking — call every frame</pre>
+        </section>
+
+        <!-- Bluetooth -->
+        <section class="doc-section" id="bluetooth">
+          <p class="eyebrow">Wireless Input</p>
+          <h2>Bluetooth Controllers</h2>
+          <p>OkamaOS uses <strong>BlueZ 5</strong> (<code>bluetoothd</code>) for Bluetooth HID controller support. The stack is started only when <code>BLUETOOTH_ENABLED=yes</code> in <code>okama.conf</code>, or when paired controller JSON files exist in <code>/var/okamaos/controllers/</code>.</p>
+          <h3>Pairing via CLI</h3>
+          <span class="code-label">dev console</span>
+          <pre class="code-block">okama-cli bluetooth status           # check adapter power state
+okama-cli bluetooth scan             # scan 15 s, list found devices
+okama-cli bluetooth pair &lt;mac&gt;       # pair; auto-trusts
+okama-cli bluetooth connect &lt;mac&gt;    # connect immediately</pre>
+          <h3>Auto-Reconnect</h3>
+          <p>On boot, <code>S25okama-bluetooth</code> iterates over <code>*.json</code> files in <code>/var/okamaos/controllers/</code> and calls <code>bluetoothctl connect &lt;mac&gt;</code> for each. Connection attempts are non-blocking — a missing controller does not delay boot.</p>
+          <h3>Supported Controllers</h3>
+          <ul>
+            <li>Generic USB HID gamepads (automatic, no config)</li>
+            <li>Xbox USB and Xbox One S/Series X Bluetooth (<code>hid-microsoft</code>)</li>
+            <li>Sony DualShock 4 and DualSense (<code>hid-playstation</code>, kernel 5.16+)</li>
+            <li>Nintendo Switch Pro Controller (<code>hid-nintendo</code>, kernel 5.16+)</li>
+          </ul>
+        </section>
+
+        <!-- Security -->
+        <section class="doc-section" id="security">
+          <p class="eyebrow">Access Control</p>
+          <h2>Security Model</h2>
+          <table class="doc-table">
+            <thead><tr><th>Capability</th><th>Normal</th><th>Dev Mode</th><th>Parent PIN</th></tr></thead>
+            <tbody>
+              <tr><td>Install signed <code>.ok</code></td><td>&#10003;</td><td>&#10003;</td><td>—</td></tr>
+              <tr><td>Install unsigned <code>.ok</code></td><td>&#10007;</td><td>&#10003;</td><td>Required</td></tr>
+              <tr><td>Enable developer mode</td><td>&#10007;</td><td>—</td><td>Required</td></tr>
+              <tr><td>Access tty2 shell</td><td>&#10007;</td><td>&#10003;</td><td>—</td></tr>
+              <tr><td>Factory reset</td><td>&#10007;</td><td>&#10007;</td><td>Required</td></tr>
+              <tr><td>Bluetooth pair (if restricted)</td><td>&#10007;</td><td>&#10003;</td><td>Required</td></tr>
+              <tr><td>Run arbitrary scripts</td><td>&#10007;</td><td>&#10003;</td><td>—</td></tr>
+            </tbody>
+          </table>
+          <h3>Developer Mode</h3>
+          <p>Developer mode is enabled via Settings &rarr; Developer with a parent PIN. It unlocks tty2 access, unsigned package installs, and the interactive dev console. Dev mode state is persisted in <code>/etc/okamaos/devmode.conf</code>.</p>
+          <h3>v1 Signing Design</h3>
+          <pre class="code-block">game.ok
+├── manifest.ok.json
+├── MANIFEST.sha256     ← SHA-256 of every file, signed by publisher
+├── SIGNATURE           ← Ed25519 signature against OkamaLabs root CA
+└── CERTIFICATE.pem     ← publisher cert chain to root CA</pre>
+        </section>
+
+      </main>
+    </div>
+
+    <footer class="site-footer">
+      <div>
+        <img class="footer-logo" src="assets/okama-logo.svg" width="160" height="46" alt="OkamaOS">
+        <span>Console-grade Linux for low-cost x86_64 PCs.</span>
+      </div>
+      <nav aria-label="Footer navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="catalog/apps.json">Catalog JSON</a>
+        <a href="updates/feed.json">Update Feed</a>
+      </nav>
+    </footer>
+
+    <script src="app.js"></script>
+    <script>
+      (function () {
+        const navLinks = document.querySelectorAll(".docs-nav a");
+        const sections = document.querySelectorAll(".doc-section");
+        const obs = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((e) => {
+              if (e.isIntersecting) {
+                navLinks.forEach((a) => a.classList.remove("active"));
+                const active = document.querySelector(`.docs-nav a[href="#${e.target.id}"]`);
+                if (active) active.classList.add("active");
+              }
+            });
+          },
+          { rootMargin: "-20% 0px -70% 0px" }
+        );
+        sections.forEach((s) => obs.observe(s));
+      })();
+    </script>
+  </body>
+</html>
