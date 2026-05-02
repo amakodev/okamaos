@@ -21,8 +21,8 @@
     "release_notes_url": "CHANGELOG.md",
     "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.3.0.okupdate",
     "artifact_status": "bundle-ready",
-    "sha256": "21a7e98b580d250e9be3cdaf911a9fc40b4f747b16cf2535c4b815580315d0f9",
-    "size_bytes": 36541
+    "sha256": "7311537148ec04ca436bb21fd31ee115a412fcd33cc9a2c3420077b46928666b",
+    "size_bytes": 36623
   },
   "previous": [
     {
