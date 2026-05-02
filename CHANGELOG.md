@@ -1,5 +1,15 @@
 # OkamaOS Portal Changelog
 
+## 2026-05-02 - v2.0.0 base-chain update package + blockchain pages
+
+- Published `okamaos-v2.0.0.okupdate` system update bundle (46 KB).
+- Updated `feed.json`: v2.0.0 "base-chain" is now latest; v1.3.2 moved to previous.
+- SHA-256: `c89c265f93d0d9d3463c047ff4d07bca7b5f908871dcc750e22cd12ecba5c538`
+- Added `wallet.html` — MetaMask / manual address connect, ETH + OKT balances, NFT asset grid.
+- Added `marketplace.html` — OKAssets NFT marketplace (coming-soon state + how-it-works).
+- Added `leaderboard.html` — OKToken play-to-earn rankings with filter bar.
+- Updated `index.html`: hero version badge → v2.0.0 base-chain; nav links for Marketplace, Wallet, Leaderboard; update card for v2.0.0.
+
 ## 2026-05-02 - v1.3.2 ui-stability update package
 
 - Published `okamaos-v1.3.2.okupdate` system update bundle (35 KB).

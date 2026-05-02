@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10120f">
+    <meta name="description" content="OkamaOS Leaderboard — top OKToken earners across all OkamaOS games.">
+    <title>Leaderboard | OkamaOS</title>
+    <link rel="manifest" href="site.webmanifest">
+    <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+      .lb-table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+      .lb-table thead th { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #6b7464; padding: 8px 14px; text-align: left; border-bottom: 1px solid rgba(243,239,228,0.10); }
+      .lb-table tbody tr { border-bottom: 1px solid rgba(243,239,228,0.06); transition: background .15s; }
+      .lb-table tbody tr:hover { background: rgba(243,239,228,0.03); }
+      .lb-table tbody td { padding: 14px 14px; font-size: 14px; vertical-align: middle; }
+      .rank-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 7px; font-weight: 900; font-size: 13px; }
+      .rank-1 { background: rgba(255,207,74,0.18); color: #ffcf4a; }
+      .rank-2 { background: rgba(243,239,228,0.10); color: #c9c3b3; }
+      .rank-3 { background: rgba(242,109,91,0.12); color: #f26d5b; }
+      .rank-n { background: rgba(243,239,228,0.05); color: #6b7464; }
+      .addr-cell { font-family: monospace; font-size: 13px; color: #c9c3b3; }
+      .okt-cell  { font-weight: 800; color: #8df77f; }
+      .game-cell { font-size: 12px; color: #6b7464; }
+      .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+      .filter-btn { padding: 6px 14px; border-radius: 8px; border: 1px solid rgba(243,239,228,0.12); background: transparent; color: #c9c3b3; font-size: 12px; font-weight: 700; cursor: pointer; transition: all .15s; }
+      .filter-btn.active { border-color: rgba(141,247,127,0.4); background: rgba(141,247,127,0.08); color: #8df77f; }
+      .coming-band { text-align: center; padding: 60px 0; }
+      .coming-tag  { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 3px 9px; border-radius: 5px; background: rgba(255,207,74,0.10); color: #ffcf4a; }
+    </style>
+  </head>
+  <body>
+    <canvas id="signalCanvas" aria-hidden="true"></canvas>
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="OkamaOS home">
+        <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
+      </a>
+      <nav id="primary-nav" aria-label="Primary navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="marketplace.html">Marketplace</a>
+        <a href="wallet.html">Wallet</a>
+        <a href="leaderboard.html" aria-current="page">Leaderboard</a>
+      </nav>
+      <a class="header-action" href="wallet.html">My Wallet</a>
+      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="primary-nav">
+        <span></span><span></span><span></span>
+      </button>
+    </header>
+
+    <main>
+      <section class="band" style="padding-top:48px">
+        <div class="section-inner">
+          <p class="eyebrow">Play-to-earn rankings</p>
+          <h1 style="font-size:clamp(1.6rem,4vw,2.4rem);font-weight:900;margin:0 0 10px">
+            OKToken Leaderboard
+          </h1>
+          <p style="color:#c9c3b3;max-width:560px;line-height:1.7;margin:0 0 28px">
+            Top earners ranked by total <strong style="color:#8df77f">OKT</strong> earned
+            across all OkamaOS games. Rewards are signed on-device and minted on <strong>Base</strong>.
+          </p>
+
+          <!-- Filter bar -->
+          <div class="filter-bar">
+            <button class="filter-btn active" data-game="all">All Games</button>
+            <button class="filter-btn" data-game="com.okamalabs.demo">Okama Demo</button>
+          </div>
+
+          <!-- Coming-soon state -->
+          <div class="coming-band" id="comingSoon">
+            <span class="coming-tag">Coming soon</span>
+            <h2 style="font-size:1.4rem;font-weight:900;margin:20px 0 10px">
+              Rankings open when the first rewards are claimed
+            </h2>
+            <p style="color:#c9c3b3;font-size:14px;max-width:440px;margin:0 auto 24px;line-height:1.7">
+              The leaderboard populates automatically as players earn OKToken.
+              Deploy the contracts and enable blockchain support in your game manifest to get started.
+            </p>
+            <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+              <a class="button primary" href="docs.html#blockchain">Blockchain docs</a>
+              <a class="button secondary" href="marketplace.html">How play-to-earn works</a>
+            </div>
+          </div>
+
+          <!-- Leaderboard table (shown when populated) -->
+          <div id="lbContent" style="display:none">
+            <table class="lb-table" aria-label="OKToken leaderboard">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Address</th>
+                  <th>Total OKT</th>
+                  <th>Top Game</th>
+                  <th>Claims</th>
+                </tr>
+              </thead>
+              <tbody id="lbBody"></tbody>
+            </table>
+            <p style="font-size:12px;color:#6b7464;margin-top:16px;text-align:center">
+              Rankings update every 10 minutes from the OkamaLabs relay index.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Stat band -->
+      <section class="band intro-band" style="margin-top:0">
+        <div class="section-inner intro-grid">
+          <div>
+            <p class="eyebrow">Ecosystem stats</p>
+            <h2>OKToken at a glance.</h2>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px">
+            <div style="text-align:center">
+              <div style="font-size:1.8rem;font-weight:900;color:#8df77f" id="totalOKT">—</div>
+              <div style="font-size:11px;color:#6b7464;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-top:4px">Total OKT earned</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:1.8rem;font-weight:900;color:#53d9e6" id="totalPlayers">—</div>
+              <div style="font-size:11px;color:#6b7464;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-top:4px">Players</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:1.8rem;font-weight:900;color:#ffcf4a" id="totalClaims">—</div>
+              <div style="font-size:11px;color:#6b7464;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-top:4px">Reward claims</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <img class="footer-logo" src="assets/okama-logo.svg" width="160" height="46" alt="OkamaOS">
+        <span>Console-grade Linux for low-cost x86_64 PCs.</span>
+      </div>
+      <nav aria-label="Footer navigation">
+        <a href="docs.html">Docs</a>
+        <a href="marketplace.html">Marketplace</a>
+        <a href="wallet.html">Wallet</a>
+        <a href="leaderboard.html">Leaderboard</a>
+        <a href="changelog.html">Changelog</a>
+      </nav>
+    </footer>
+
+    <script src="app.js"></script>
+    <script>
+      const RELAY_LEADERBOARD = "https://api.okamalabs.com/v1/leaderboard";
+
+      async function loadLeaderboard(game = "all") {
+        try {
+          const url = game === "all"
+            ? RELAY_LEADERBOARD
+            : `${RELAY_LEADERBOARD}?game=${encodeURIComponent(game)}`;
+          const r = await fetch(url, { headers: { "Accept": "application/json" } });
+          if (!r.ok) return;
+          const data = await r.json();
+          renderLeaderboard(data.entries || []);
+          if (data.stats) renderStats(data.stats);
+        } catch {}
+      }
+
+      function rankClass(i) {
+        if (i === 0) return "rank-1";
+        if (i === 1) return "rank-2";
+        if (i === 2) return "rank-3";
+        return "rank-n";
+      }
+
+      function renderLeaderboard(entries) {
+        if (!entries.length) return;
+        document.getElementById("comingSoon").style.display = "none";
+        document.getElementById("lbContent").style.display  = "";
+        const tbody = document.getElementById("lbBody");
+        tbody.innerHTML = entries.map((e, i) => `
+          <tr>
+            <td><span class="rank-badge ${rankClass(i)}">${i + 1}</span></td>
+            <td class="addr-cell">${e.address.slice(0,10)}…${e.address.slice(-6)}</td>
+            <td class="okt-cell">${(Number(e.total_okt) / 1e18).toFixed(2)} OKT</td>
+            <td class="game-cell">${e.top_game || "—"}</td>
+            <td>${e.claims || 0}</td>
+          </tr>`).join("");
+      }
+
+      function renderStats(stats) {
+        document.getElementById("totalOKT").textContent =
+          (Number(stats.total_okt_earned || 0) / 1e18).toFixed(0) + " OKT";
+        document.getElementById("totalPlayers").textContent = stats.total_players || "0";
+        document.getElementById("totalClaims").textContent  = stats.total_claims  || "0";
+      }
+
+      document.querySelectorAll(".filter-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          loadLeaderboard(btn.dataset.game);
+        });
+      });
+
+      loadLeaderboard();
+    </script>
+  </body>
+</html>

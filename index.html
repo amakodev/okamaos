@@ -21,8 +21,10 @@
         <a href="docs.html">Docs</a>
         <a href="packages.html">Packages</a>
         <a href="studio.html">Studio</a>
+        <a href="marketplace.html">Marketplace</a>
+        <a href="wallet.html">Wallet</a>
+        <a href="leaderboard.html">Leaderboard</a>
         <a href="#get-started">Get OS</a>
-        <a href="#games">Games</a>
         <a href="changelog.html">Changelog</a>
       </nav>
       <a class="header-action" href="https://okamaos.zyntrix.solutions" target="_blank" rel="noopener">Open Studio</a>
@@ -34,7 +36,7 @@
     <main id="top">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-copy">
-          <p class="eyebrow">Public preview — v1.3.0 devlink</p>
+          <p class="eyebrow">Public preview — v2.0.0 base-chain</p>
           <h1 id="hero-title" class="hero-logo-title">
             <img src="assets/okama-logo.svg" width="560" height="160" alt="OkamaOS">
           </h1>
@@ -51,7 +53,7 @@
         <div class="hero-panel" aria-label="Ecosystem status">
           <div>
             <span class="panel-label">OS Build</span>
-            <strong id="heroVersion">1.3.0 devlink</strong>
+            <strong id="heroVersion">2.0.0 base-chain</strong>
           </div>
           <div>
             <span class="panel-label">Studio</span>
@@ -253,11 +255,11 @@
           </div>
           <div class="update-card" id="updateCard" aria-live="polite">
             <span class="status-pill">recommended</span>
-            <h3>1.3.0 devlink</h3>
+            <h3>2.0.0 base-chain</h3>
             <p>
-              Fixes ZIP <code>.ok</code> installs from Okama Studio, enables
-              key-hold navigation, cleans ANSI codes in the dev console, and
-              adds custom Game Store URL for wireless dev-server game hosting.
+              Blockchain Foundation — non-custodial Base wallet, OKToken
+              play-to-earn rewards, OKAssets NFT inventory, okama-wallet CLI,
+              Settings &rsaquo; Wallet screen, and manifest blockchain field support.
             </p>
             <div class="card-meta">
               <span>2026-05-02</span>
@@ -265,13 +267,14 @@
               <span>bundle-ready</span>
             </div>
             <ul class="update-list">
-              <li>Fix: ZIP packages from Okama Studio now install correctly.</li>
-              <li>Fix: Key-hold navigation auto-repeat now works.</li>
-              <li>Fix: Dev console strips ANSI escape codes.</li>
-              <li>Feature: Custom store URL via X button in Game Store.</li>
+              <li>New: on-device Base wallet (BIP-39, JSON keystore v3, Parent PIN encrypted).</li>
+              <li>New: okama-wallet CLI — init, address, balance, sign, assets, export, log.</li>
+              <li>New: Settings &rsaquo; Wallet screen in okama-shell.</li>
+              <li>New: Post-game OKToken reward claim hook in okama-run.</li>
+              <li>New: manifest.py validates blockchain: field.</li>
             </ul>
             <div class="download-row">
-              <a class="button primary" href="updates/okamaos-v1.3.0.okupdate" download>Download v1.3.0</a>
+              <a class="button primary" href="updates/okamaos-v2.0.0.okupdate" download>Download v2.0.0</a>
               <a class="button secondary" href="changelog.html">Release notes</a>
             </div>
           </div>
