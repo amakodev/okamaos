@@ -1,33 +1,39 @@
 {
   "schema_version": "1.0",
   "channel": "public-preview",
-  "updated_at": "2026-05-02T19:27:00Z",
+  "updated_at": "2026-05-02T19:40:00Z",
   "latest": {
-    "version": "2.0.0",
-    "codename": "base-chain",
+    "version": "2.1.0",
+    "codename": "relay-controls",
     "date": "2026-05-02",
     "status": "preview",
     "priority": "recommended",
-    "minimum_supported_version": "1.0.0",
-    "title": "Blockchain Foundation — Base Wallet, OKToken, OKAssets",
-    "summary": "Adds non-custodial Base wallet, OKToken play-to-earn rewards, OKAssets NFT inventory cache, okama-wallet CLI, Settings > Wallet screen, manifest blockchain field validation, and post-game reward claim hook.",
+    "minimum_supported_version": "2.0.0",
+    "title": "Relay Controls & Dev Tooling",
+    "summary": "Argon2id wallet PIN hardening, parent wallet controls, Settings > Wallet PIN unlock overlay, Update History browser (dev mode), and Store URL gated to dev mode.",
     "notes": [
-      "New: on-device Base (EVM L2) wallet — BIP-39 keygen, JSON keystore v3 encrypted with Parent PIN.",
-      "New: okama-wallet CLI — init, address, balance, sign, assets, export, log.",
-      "New: wallet.py, nft.py, rewards.py added to /usr/lib/okamaos/.",
-      "New: okama-shell Settings > Wallet sub-screen — shows address, ETH, OKT, NFT asset count.",
-      "New: okama-run injects OKAMA_ASSETS_PATH and OKAMA_WALLET_ADDRESS env vars at game launch.",
-      "New: okama-run submits pending play-to-earn reward claims to OkamaLabs relay on clean game exit.",
-      "Improved: manifest.py validates optional blockchain: field (token_rewards, nft_assets).",
-      "Bump: VERSION 1.3.2 -> 2.0.0."
+      "Security: wallet passphrase now Argon2id-stretched (64 MB, t=2) when argon2-cffi is installed.",
+      "New: parent.conf WALLET_ENABLED and WALLET_DAILY_LIMIT_OKT controls via parent.py.",
+      "New: Settings > Wallet [A] opens PIN unlock overlay; fetches live ETH + OKT balances on confirm.",
+      "New (dev): Settings > Updates > Browse Update History — fetches feed.json, lists all versions, [A] to download.",
+      "Changed: Game Store 'Set Server URL' button now hidden unless dev mode is active (F10).",
+      "Bump: VERSION 2.0.0 -> 2.1.0."
     ],
     "release_notes_url": "CHANGELOG.md",
-    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.0.0.okupdate",
+    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.0.okupdate",
     "artifact_status": "bundle-ready",
-    "sha256": "c89c265f93d0d9d3463c047ff4d07bca7b5f908871dcc750e22cd12ecba5c538",
-    "size_bytes": 47033
+    "sha256": "8012cffdc38d79c89a8a01b3dcfcb9d3d187b08bb75d7d3cc9eb9c083717ab34",
+    "size_bytes": 42830
   },
   "previous": [
+    {
+      "version": "2.0.0",
+      "codename": "base-chain",
+      "date": "2026-05-02",
+      "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.0.0.okupdate",
+      "sha256": "c89c265f93d0d9d3463c047ff4d07bca7b5f908871dcc750e22cd12ecba5c538",
+      "size_bytes": 47033
+    },
     {
       "version": "1.3.2",
       "codename": "ui-stability",
