@@ -1,27 +1,39 @@
 {
   "schema_version": "1.0",
   "channel": "public-preview",
-  "updated_at": "2026-04-29T20:45:00Z",
+  "updated_at": "2026-05-02T03:41:00Z",
   "latest": {
-    "version": "1.0.2",
-    "codename": "Safe System Update",
-    "date": "2026-04-29",
+    "version": "1.0.3",
+    "codename": "devlink",
+    "date": "2026-05-02",
     "status": "preview",
     "priority": "recommended",
     "minimum_supported_version": "0.1.0",
-    "title": "Safe system updates with data preservation",
-    "summary": "OkamaOS can now apply repo-hosted system update bundles that replace CLI, shell, runtime, and brand files while preserving games, saves, settings, and update backups.",
+    "title": "Dev-server hosting, ZIP package support, input & console fixes",
+    "summary": "Fixes .ok package installs from Okama Studio (ZIP format), enables key-hold navigation, cleans ANSI codes in dev console, and adds custom store URL for dev-server game hosting.",
     "notes": [
-      "Adds real okama-update apply support for .okupdate system bundles.",
-      "Backs up replaced system files before applying an update.",
-      "Preserves games, saves, controllers, logs, cache, update history, and parent/developer config."
+      "Fix: .ok packages built by Okama Studio (JSZip/ZIP) now install and run correctly.",
+      "Fix: Holding arrow or WASD keys now auto-repeats navigation (pygame.key.set_repeat).",
+      "Fix: Dev console no longer displays ANSI escape sequences as symbols — uses TERM=dumb + regex strip.",
+      "Fix: Dev console command input tail-scrolls when longer than the display width.",
+      "Feature: Game Store X button opens custom store URL entry — enter your Okama Studio LAN URL to install dev games wirelessly."
     ],
     "release_notes_url": "CHANGELOG.md",
-    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.2.okupdate",
+    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.3.okupdate",
     "artifact_status": "bundle-ready",
-    "sha256": "87f43425884332a6e5e2bac2cd69b6c4d59efd53368e0fe43de2cde8ad6cfceb",
-    "size_bytes": 28107
+    "sha256": "723715c33a18a70b47cb6dce3d8825b5c4dd0abfc1ebc24eeab9144212a27eff",
+    "size_bytes": 36540
   },
+  "previous": [
+    {
+      "version": "1.0.2",
+      "codename": "Safe System Update",
+      "date": "2026-04-29",
+      "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.2.okupdate",
+      "sha256": "87f43425884332a6e5e2bac2cd69b6c4d59efd53368e0fe43de2cde8ad6cfceb",
+      "size_bytes": 28107
+    }
+  ],
   "channels": [
     {
       "name": "public-preview",
