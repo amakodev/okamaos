@@ -1,5 +1,13 @@
 # OkamaOS Portal Changelog
 
+## 2026-05-02 - v2.0.0 + v2.1.0 packages rebuilt with requirements.txt
+
+- Both packages rebuilt to include `requirements.txt` at bundle root.
+- `okama-update apply` now runs `pip install -r requirements.txt` during installation.
+- `v2.0.0` deps: `eth-account>=0.8.0`, `mnemonic>=0.20`
+- `v2.1.0` deps: `eth-account>=0.8.0`, `mnemonic>=0.20`, `argon2-cffi>=21.3.0`
+- Updated SHA-256 and sizes in `feed.json` accordingly.
+
 ## 2026-05-02 - v2.1.0 relay-controls update package
 
 - Published `okamaos-v2.1.0.okupdate` system update bundle (42 KB).

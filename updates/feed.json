@@ -22,8 +22,8 @@
     "release_notes_url": "CHANGELOG.md",
     "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.0.okupdate",
     "artifact_status": "bundle-ready",
-    "sha256": "fc94dfb5447f5074cc72c8708f9c4120d80fc643fefb44791f52752b88903e27",
-    "size_bytes": 42293
+    "sha256": "62090be615a00c5aba2cde3741214d30df2fe5f04a790b63e79d44c3cd7a3ac1",
+    "size_bytes": 42593
   },
   "previous": [
     {
@@ -31,8 +31,8 @@
       "codename": "base-chain",
       "date": "2026-05-02",
       "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.0.0.okupdate",
-      "sha256": "a1ca8c5130db8fda41335312d606fce093991a3e8a10fe3807da4c32c6d4654f",
-      "size_bytes": 46657
+      "sha256": "c1a327f0bff6524152e15ece276f41ea012fed94c38d1706f9310ea20ecffbb0",
+      "size_bytes": 46977
     },
     {
       "version": "1.3.2",
