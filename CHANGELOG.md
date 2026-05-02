@@ -1,9 +1,9 @@
 # OkamaOS Portal Changelog
 
-## 2026-05-02 - devlink (v1.0.3)
+## 2026-05-02 - devlink (v1.3.0)
 
-- Published `okamaos-v1.0.3.okupdate` system update bundle.
-- Updated `feed.json` to point at v1.0.3 with SHA-256 and size metadata.
+- Published `okamaos-v1.3.0.okupdate` system update bundle.
+- Updated `feed.json` to point at v1.3.0 with SHA-256 and size metadata.
 - Fixes: ZIP `.ok` package install (Okama Studio builds), key-hold navigation repeat, dev console ANSI escape codes, dev console command tail-scroll.
 - Feature: Game Store custom server URL entry (X button) for dev-server wireless game hosting.
 - Previous v1.0.2 archived in `previous` array in feed.json.
