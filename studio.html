@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10120f">
+    <meta name="description"
+      content="Okama Studio — AI-powered browser game engine for OkamaOS. Build Python/pygame games, export .ok packages, run a dev server, and learn game dev with the built-in curriculum.">
+    <title>OkamaOS | Okama Studio</title>
+    <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <canvas id="signalCanvas" aria-hidden="true"></canvas>
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="OkamaOS home">
+        <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html" aria-current="page">Studio</a>
+        <a href="index.html#games">Games</a>
+        <a href="index.html#updates">Updates</a>
+        <a href="changelog.html">Changelog</a>
+      </nav>
+      <a class="header-action" href="updates/feed.json">Feed JSON</a>
+    </header>
+
+    <main>
+      <!-- Studio Hero -->
+      <section class="hero" aria-labelledby="studio-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Okama Studio v0.3.0</p>
+          <h1 id="studio-title">Build games with AI in your browser.</h1>
+          <p class="hero-text">
+            Okama Studio is a browser-based game engine and IDE for OkamaOS.
+            Write Python + pygame games, preview with Pyodide, export
+            signed <code>.ok</code> packages, and push directly to an
+            OkamaOS device over your local network.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="https://studio.okamaos.dev" target="_blank" rel="noopener">Open Studio</a>
+            <a class="button secondary" href="#getting-started">Getting started</a>
+          </div>
+        </div>
+        <div class="hero-panel" aria-label="Studio status">
+          <div>
+            <span class="panel-label">Version</span>
+            <strong>v0.3.0</strong>
+          </div>
+          <div>
+            <span class="panel-label">Runtime</span>
+            <strong>Pyodide 0.26 WASM</strong>
+          </div>
+          <div>
+            <span class="panel-label">AI Models</span>
+            <strong>Gemini + Qwen</strong>
+          </div>
+          <div>
+            <span class="panel-label">Output</span>
+            <strong>.ok packages</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Features -->
+      <section class="band" id="features" aria-labelledby="features-title">
+        <div class="section-inner">
+          <p class="eyebrow">Feature overview</p>
+          <h2 id="features-title">Everything in the IDE.</h2>
+          <div class="studio-features">
+            <div class="feature-card">
+              <span class="feature-icon">IDE</span>
+              <h3>3-Panel IDE</h3>
+              <p>FileTree sidebar, Monaco Editor with a custom <code>okama-dark</code> theme, and a right panel for AI, preview, assets, packages, and version history. Everything a game project needs in one browser tab.</p>
+            </div>
+            <div class="feature-card">
+              <span class="feature-icon">AI Agent</span>
+              <h3>Okama Agent</h3>
+              <p>Streaming agentic AI powered by Gemini or Qwen. The agent reads your entire project context, writes complete files, and can commit, branch, and create issues. No copy-paste required.</p>
+            </div>
+            <div class="feature-card">
+              <span class="feature-icon">Preview</span>
+              <h3>Live Python Preview</h3>
+              <p>Pyodide 0.26 WASM runs your Python + pygame code directly in the browser. Stdout is captured in a scrollable console. No install, no local Python required.</p>
+            </div>
+            <div class="feature-card">
+              <span class="feature-icon">Package</span>
+              <h3>Package Builder</h3>
+              <p>The Package Builder tab validates your manifest, signs the bundle with SHA-256, and exports a ready-to-install <code>.ok</code> file. Also generates a companion <code>.ok.sig</code> file.</p>
+            </div>
+            <div class="feature-card">
+              <span class="feature-icon">Server</span>
+              <h3>Dev Server Hosting</h3>
+              <p>The Server tab shows your LAN IP and URL. Click "Publish to Dev Server" in the Package Builder and the game appears in Game Store on any OkamaOS device on your network — install wirelessly without USB.</p>
+            </div>
+            <div class="feature-card">
+              <span class="feature-icon">Learn</span>
+              <h3>Learn Hub</h3>
+              <p>10-chapter Python &times; Pygame curriculum with live PyPlayground cells, theory, exercises with hint/solution toggle, an AI Tutor panel, and XP tracking in localStorage.</p>
+            </div>
+            <div class="feature-card">
+              <span class="feature-icon">Assets</span>
+              <h3>Asset Manager</h3>
+              <p>Drag-and-drop image and audio uploads. One-click AI integration prompt generation inserts the asset into your game code via the agent.</p>
+            </div>
+            <div class="feature-card">
+              <span class="feature-icon">VCS</span>
+              <h3>Version History</h3>
+              <p>localStorage-backed version control — branches, commits (file snapshots you can restore), issues with labels, and pull requests with merge/close. Integrated with the AI agent.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Getting Started -->
+      <section class="band split-band" id="getting-started" aria-labelledby="start-title">
+        <div class="section-inner">
+          <p class="eyebrow">Quick start</p>
+          <h2 id="start-title">From zero to .ok in four steps.</h2>
+          <div class="step-grid">
+            <div class="step-item">
+              <h4>Open Studio &amp; pick a template</h4>
+              <p>Visit the Studio URL. The Dashboard shows a "New Game" wizard with 4 genre templates — Platformer, Top-Down, Puzzle, and Arcade. The AI generates a working starter in seconds.</p>
+            </div>
+            <div class="step-item">
+              <h4>Build with the AI Agent</h4>
+              <p>Open the Agent tab, describe what you want, and the AI writes complete files into your project. It can read your code, create branches, and run your game in the preview panel.</p>
+            </div>
+            <div class="step-item">
+              <h4>Preview with Pyodide</h4>
+              <p>Click Preview to run your Python + pygame game in-browser via Pyodide WASM. The console panel shows stdout. Iterate quickly without leaving the browser.</p>
+            </div>
+            <div class="step-item">
+              <h4>Export as .ok</h4>
+              <p>Open the Package tab. Fill in your publisher ID and version, then click "Build Package". Studio validates the manifest, signs it with SHA-256, and downloads <code>mygame.ok</code>.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- API Keys Setup -->
+      <section class="band" id="api-keys" aria-labelledby="keys-title">
+        <div class="section-inner split-grid">
+          <div>
+            <p class="eyebrow">Configuration</p>
+            <h2 id="keys-title">API Keys</h2>
+            <p>Studio API keys are stored in your browser's <code>localStorage</code> only — they are never sent to any server. Keys are required to enable AI features.</p>
+            <p>Go to Settings in Studio to enter your keys. The free-tier Gemini model (<code>gemini-3.1-flash-lite-preview</code>) works with a free Google AI Studio API key.</p>
+            <div class="inline-actions">
+              <a class="button primary" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Get Gemini key</a>
+              <a class="button secondary" href="https://dashscope.aliyuncs.com/" target="_blank" rel="noopener">Get Qwen key</a>
+            </div>
+          </div>
+          <div class="update-card">
+            <span class="status-pill available">Free tier</span>
+            <h3>Gemini 3.1 Flash Lite Preview</h3>
+            <p>The default model. Works with a free Google AI Studio API key and has generous rate limits for game development use.</p>
+            <div class="card-meta">
+              <span>15 RPM</span>
+              <span>250 TPM</span>
+              <span>500 RPD</span>
+            </div>
+            <ul class="update-list">
+              <li>No billing required for the free tier.</li>
+              <li>Paid tier unlocks Gemini 2.5 Pro and Gemini 3.1 Pro.</li>
+              <li>Qwen Max/Plus/Turbo available as alternatives.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI Agent Tools Reference -->
+      <section class="band creator-band" id="agent-tools" aria-labelledby="tools-title">
+        <div class="section-inner">
+          <p class="eyebrow">AI Agent</p>
+          <h2 id="tools-title">Agent Tool Reference</h2>
+          <p style="color:var(--muted);line-height:1.65;max-width:680px;margin-bottom:0">The Okama Agent uses XML-format tool calls parsed from its streaming response. Nine tools are available; the agent picks the right ones automatically. You can also ask for specific tool actions by name.</p>
+          <div class="tool-grid">
+            <div class="tool-item">
+              <span class="tool-name">write_file</span>
+              <p>Write complete file contents to a project path. The agent always sends full file contents — no partial patches.</p>
+            </div>
+            <div class="tool-item">
+              <span class="tool-name">read_file</span>
+              <p>Read the current contents of any project file. Used to inspect code before making changes.</p>
+            </div>
+            <div class="tool-item">
+              <span class="tool-name">delete_file</span>
+              <p>Remove a file from the project. Used when refactoring or cleaning up generated code.</p>
+            </div>
+            <div class="tool-item">
+              <span class="tool-name">list_files</span>
+              <p>List all files in the project (or a subdirectory). Used to understand project structure before writing.</p>
+            </div>
+            <div class="tool-item">
+              <span class="tool-name">search_files</span>
+              <p>Search project files for a pattern. Used to locate functions, imports, or any text before editing.</p>
+            </div>
+            <div class="tool-item">
+              <span class="tool-name">commit</span>
+              <p>Create a commit snapshot of the current project state with a message. Stored in localStorage version history.</p>
+            </div>
+            <div class="tool-item">
+              <span class="tool-name">create_branch</span>
+              <p>Create a new branch in the version history. Use for experimental features or parallel game variants.</p>
+            </div>
+            <div class="tool-item">
+              <span class="tool-name">create_issue</span>
+              <p>Add an issue to the project's version history. Useful for tracking bugs or feature requests as you build.</p>
+            </div>
+            <div class="tool-item">
+              <span class="tool-name">run_preview</span>
+              <p>Trigger the Pyodide preview panel to run the current project code. Used to test a game after writing.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Dev Server & OkamaOS Deploy -->
+      <section class="band" id="dev-server" aria-labelledby="devserver-title">
+        <div class="section-inner split-grid">
+          <div>
+            <p class="eyebrow">Wireless deployment</p>
+            <h2 id="devserver-title">Dev Server &rarr; OkamaOS Device</h2>
+            <p>
+              The Dev Server lets you push games from Studio directly to an OkamaOS device on your local network — no USB stick required.
+            </p>
+            <ol style="color:var(--muted);line-height:1.9;padding-left:20px;margin-top:16px">
+              <li>Open the <strong>Server tab</strong> in Studio — copy your LAN URL (e.g. <code>http://192.168.1.42:3000</code>).</li>
+              <li>Build your game in the <strong>Package tab</strong> and click <strong>"Publish to Dev Server"</strong>.</li>
+              <li>On your OkamaOS device, go to <strong>Settings &rarr; Game Store</strong> and press <strong>X</strong>.</li>
+              <li>Enter your Studio LAN URL in the overlay. The device fetches the catalog from Studio and lets you install your game directly.</li>
+            </ol>
+          </div>
+          <div class="update-card">
+            <span class="status-pill available">v0.3.0</span>
+            <h3>Dev Store API</h3>
+            <p>Studio runs a lightweight Express API alongside the Next.js dev server. OkamaOS devices consume the same catalog JSON format as the public portal.</p>
+            <div class="card-meta">
+              <span>GET /api/dev-store</span>
+            </div>
+            <ul class="update-list">
+              <li>GET <code>/api/dev-store</code> — catalog JSON</li>
+              <li>POST <code>/api/dev-store</code> — upload <code>.ok</code> bundle</li>
+              <li>DELETE <code>/api/dev-store</code> — remove game by ID</li>
+              <li>GET <code>/api/dev-store/info</code> — server LAN info</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Learn Hub -->
+      <section class="band creator-band" id="learn" aria-labelledby="learn-title">
+        <div class="section-inner creator-grid">
+          <div>
+            <p class="eyebrow">Learn Hub</p>
+            <h2 id="learn-title">Python &times; Pygame curriculum, built in.</h2>
+            <p style="color:var(--muted);line-height:1.7;margin-top:14px">10 chapters from variables to collision detection. Each lesson has theory, a live PyPlayground cell you can edit and run, an exercise with hint/solution toggle, and an AI Tutor panel that answers questions in context. XP tracks your progress.</p>
+          </div>
+          <div class="creator-steps">
+            <article>
+              <span>Ch 1–3</span>
+              <h3>Python Basics</h3>
+              <p>Variables, loops, functions — with live code cells you edit and run instantly.</p>
+            </article>
+            <article>
+              <span>Ch 4–7</span>
+              <h3>Pygame Core</h3>
+              <p>Drawing, animation, input, collision detection — every concept with a working example.</p>
+            </article>
+            <article>
+              <span>Ch 8–10</span>
+              <h3>Full Game</h3>
+              <p>State machines, save data, and the controller input protocol — ship a complete <code>.ok</code> game.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <img class="footer-logo" src="assets/okama-logo.svg" width="160" height="46" alt="OkamaOS">
+        <span>Console-grade Linux for low-cost x86_64 PCs.</span>
+      </div>
+      <nav aria-label="Footer navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="catalog/apps.json">Catalog JSON</a>
+        <a href="updates/feed.json">Update Feed</a>
+      </nav>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

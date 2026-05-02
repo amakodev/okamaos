@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10120f">
+    <meta name="description"
+      content="OkamaOS full release history — OS, Studio, and portal changelog with version filter.">
+    <title>OkamaOS | Changelog</title>
+    <link rel="icon" href="assets/okama-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <canvas id="signalCanvas" aria-hidden="true"></canvas>
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="OkamaOS home">
+        <img src="assets/okama-logo.svg" width="144" height="42" alt="OkamaOS">
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="index.html#games">Games</a>
+        <a href="index.html#updates">Updates</a>
+        <a href="changelog.html" aria-current="page">Changelog</a>
+      </nav>
+      <a class="header-action" href="updates/feed.json">Feed JSON</a>
+    </header>
+
+    <div class="page-hero">
+      <p class="eyebrow">Release History</p>
+      <h1>Changelog</h1>
+      <p>Every OS release, Studio version, and portal update — documented in full. Filter by component or read the complete history below.</p>
+    </div>
+
+    <main style="padding: clamp(28px,4vw,56px) clamp(20px,4vw,64px); max-width: 1100px; margin: 0 auto;">
+
+      <div class="changelog-filters">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="os">OS</button>
+        <button class="filter-btn" data-filter="studio">Studio</button>
+        <button class="filter-btn" data-filter="pages">Portal</button>
+      </div>
+
+      <!-- v1.3.0 / studio-0.3.0 -->
+      <div class="cl-entry" data-tags="os studio">
+        <div class="cl-header">
+          <span class="ver-badge">v1.3.0 / studio-0.3.0</span>
+          <span class="ver-date">2026-05-02</span>
+          <span class="ver-tag os">OS</span>
+          <span class="ver-tag studio">Studio</span>
+        </div>
+        <h3>devlink — Dev-Server Hosting &amp; Console Fixes</h3>
+        <div class="change-group">
+          <h4>Studio — Dev-Server Game Hosting</h4>
+          <ul class="change-items">
+            <li><strong>Dev-store API routes</strong> (<code>app/api/dev-store/</code>): catalog GET, upload POST, remove DELETE, info GET</li>
+            <li><strong>DevServerPanel</strong>: shows LAN IP/URL, lists hosted games, copy-to-clipboard URL, remove controls</li>
+            <li><strong>"Publish to Dev Server" button</strong> in PackageBuilder — builds <code>.ok</code> in-browser and POSTs to local dev-store API</li>
+            <li><strong>"Server" tab</strong> in StudioClient right panel</li>
+          </ul>
+        </div>
+        <div class="change-group">
+          <h4>Studio — Branding</h4>
+          <ul class="change-items">
+            <li><code>public/okama-labs-logo.svg</code> — Okama Labs wordmark with concentric offset-circles mark</li>
+            <li><code>public/zyntrix-favicon.svg</code> — Zyntrix Z-in-circle favicon for the Studio browser tab</li>
+            <li>Updated <code>app/layout.tsx</code>: title is now "Okama Studio — OkamaLabs Game Engine Platform"</li>
+          </ul>
+        </div>
+        <div class="change-group">
+          <h4>OS — Console Fixes (system update v1.3.0)</h4>
+          <ul class="change-items">
+            <li><strong>ZIP package support</strong>: <code>.ok</code> files built by Okama Studio now install correctly; auto-detects ZIP vs tar via magic bytes</li>
+            <li><strong>Key repeat</strong>: <code>pygame.key.set_repeat(280, 80)</code> + evdev <code>_KEY_REPEAT</code> forwarding for nav/backspace codes</li>
+            <li><strong>Dev console ANSI</strong>: <code>TERM=dumb</code>, <code>NO_COLOR=1</code>, <code>LS_COLORS=</code> on PTY shell + <code>_ANSI_RE</code> regex strip</li>
+            <li><strong>Dev console tail-scroll</strong>: long command input shows <code>&hellip;</code> prefix and scrolls left</li>
+            <li><strong>Game Store custom URL</strong>: X button opens URL entry overlay; URL saved to <code>okama.conf</code> <code>STORE_URL</code></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- studio-0.2.0 -->
+      <div class="cl-entry" data-tags="studio">
+        <div class="cl-header">
+          <span class="ver-badge">studio-0.2.0</span>
+          <span class="ver-date">2026-05-02</span>
+          <span class="ver-tag studio">Studio</span>
+        </div>
+        <h3>Okama Agent — Agentic AI Upgrade</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li><strong>Okama Agent (<code>AgentChat.tsx</code>)</strong>: streaming agentic AI panel — parses XML tool calls and executes them inline with per-tool status badges (running / done / error)</li>
+            <li><strong>Agentic tool system (<code>lib/ai/agentTools.ts</code>)</strong>: 9 tools — <code>write_file</code>, <code>read_file</code>, <code>delete_file</code>, <code>list_files</code>, <code>search_files</code>, <code>commit</code>, <code>create_branch</code>, <code>create_issue</code>, <code>run_preview</code></li>
+            <li><strong>Full-file write semantics</strong>: AI always sends complete file contents via <code>&lt;write_file path="..."&gt;</code> — no partial patches</li>
+            <li><strong>Project context injection</strong>: full file tree + all file contents injected into every AI request</li>
+            <li><strong>Mock version control (<code>versionHistory.ts</code>)</strong>: localStorage-backed VCS — branches, commits, issues, pull requests with merge/close</li>
+            <li><strong>Version History panel (<code>VersionPanel.tsx</code>)</strong>: 4-tab panel — Commits (restore snapshots), Branches, Issues, Pull Requests</li>
+            <li><strong>Free-tier Gemini models</strong>: <code>gemini-3.1-flash-lite-preview</code> default (15 RPM, 250 TPM, 500 RPD free)</li>
+          </ul>
+        </div>
+        <div class="change-group">
+          <h4>Changed</h4>
+          <ul class="change-items">
+            <li>Right panel tabs: AI Chat renamed to <strong>Agent</strong>; <strong>History</strong> tab added</li>
+            <li>Default AI model changed from <code>gemini-2.0-flash</code> (no free tier) to <code>gemini-3.1-flash-lite-preview</code></li>
+            <li>Settings model selector split into Free Tier / Paid Tier sections with per-model rate limit notes</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- studio-0.1.0 -->
+      <div class="cl-entry" data-tags="studio">
+        <div class="cl-header">
+          <span class="ver-badge">studio-0.1.0</span>
+          <span class="ver-date">2026-05-01</span>
+          <span class="ver-tag studio">Studio</span>
+        </div>
+        <h3>Okama Studio — Initial Release</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li><strong>Next.js 16 game engine studio</strong>: App Router, React 19, Tailwind CSS v4 with OkamaOS design tokens</li>
+            <li><strong>AI game builder</strong>: streaming AI via Google Gemini and Qwen; runtime model switching in Settings</li>
+            <li><strong>3-panel Studio IDE</strong>: FileTree sidebar, Monaco Editor (custom <code>okama-dark</code> theme), right panel with Agent / Preview / Assets / Package / History tabs</li>
+            <li><strong>In-browser Python preview</strong>: Pyodide 0.26 WASM — no install needed; pygame stdout captured in console panel</li>
+            <li><strong>Asset Manager</strong>: drag-and-drop image/audio uploads with AI integration prompt generation</li>
+            <li><strong><code>.ok</code> package builder</strong>: JSZip-based export with SHA-256 signing, manifest validation, and <code>.ok.sig</code> download</li>
+            <li><strong>Dashboard</strong>: new game wizard (4 genre templates with AI starter code), recent projects grid</li>
+            <li><strong>Learn Hub</strong>: 10-chapter Python &times; Pygame curriculum with live PyPlayground cells and XP tracking</li>
+            <li><strong>Library page</strong>: project grid with Open / Export / .ok / Delete actions</li>
+            <li><strong>Settings page</strong>: Gemini and Qwen API key manager (localStorage-only, never server-side), publisher ID</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v1.1.5 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v1.1.5</span>
+          <span class="ver-date">2026-05-01</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>Controller Polish &amp; Framebuffer Fixes</h3>
+        <div class="change-group">
+          <h4>Fixed</h4>
+          <ul class="change-items">
+            <li><strong>Boot color and performance</strong>: hard-drive Extlinux boot prefers <code>vga=789</code> (24/32-bit framebuffer) instead of 16-bit mode</li>
+            <li><strong>Framebuffer pacing</strong>: 15/16-bit fallback now uses a Pygame conversion surface instead of a Python pixel loop</li>
+            <li><strong>Input choppiness</strong>: controller axis, hat, and button events are deduplicated before broadcast</li>
+            <li><strong>Controller event dispatch</strong>: fixed input daemon event handler name collision with Python thread internals</li>
+          </ul>
+        </div>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li><strong>Xbox and PlayStation controller support</strong>: kernel config enables joystick and LED-class deps; installer loads <code>xpad</code>, <code>hid_sony</code>, <code>hid_playstation</code> before <code>okama-inputd</code></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v1.1.4 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v1.1.4</span>
+          <span class="ver-date">2026-05-01</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>Installed Boot Framebuffer Fix</h3>
+        <div class="change-group">
+          <h4>Fixed</h4>
+          <ul class="change-items">
+            <li><strong>Installed boot framebuffer</strong>: <code>okama-install</code> now writes safe Extlinux kernel arguments including <code>nomodeset</code>, <code>vga=788</code>, and <code>video=vesafb:mtrr:3</code> so installed boots create <code>/dev/fb0</code></li>
+            <li><strong>Graphics failure fallback</strong>: shell no longer runs an invisible offscreen UI; reports failure and falls back to text mode</li>
+          </ul>
+        </div>
+        <div class="change-group">
+          <h4>Changed</h4>
+          <ul class="change-items">
+            <li><strong>Boot diagnostics</strong>: shell launcher prints kernel command line on tty1 when <code>/dev/fb0</code> is not created</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v1.1.3 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v1.1.3</span>
+          <span class="ver-date">2026-05-01</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>Dev Console PTY Shell</h3>
+        <div class="change-group">
+          <h4>Fixed</h4>
+          <ul class="change-items">
+            <li><strong>Dev Console interactive commands</strong>: now uses a PTY-backed persistent shell session so commands that prompt for confirmation can receive follow-up input</li>
+            <li><strong>Dev Console logs</strong>: shell output streams through a background reader while the session remains open</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v1.0.2 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v1.0.2</span>
+          <span class="ver-date">2026-04-29</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>Safe System Update</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li>Real <code>okama-update apply</code> support for <code>.okupdate</code> system bundles</li>
+            <li>Backs up replaced system files before applying an update</li>
+            <li>Preserves games, saves, controllers, logs, cache, and local config through all updates</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v1.0.1 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v1.0.1</span>
+          <span class="ver-date">2026-04-29</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>First Wave Notify</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li>Downloadable <code>okamaos-v1.0.1.okupdate</code> manifest in the public update channel</li>
+            <li>OS and game update notification release notes</li>
+            <li>Demo game catalog updated to <code>0.1.1</code> so installed <code>0.1.0</code> builds receive update notices</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v1.0.0 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v1.0.0</span>
+          <span class="ver-date">2026-04-29</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>First Wave v1</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li>First publicly downloadable <code>okamaos-v1.0.0.okupdate</code> manifest</li>
+            <li>Boot screen and runtime-logo assets for v1 launch</li>
+            <li>Homepage branding replaced with the OkamaOS logo asset</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v0.7.0 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v0.7.0</span>
+          <span class="ver-date">2026-04</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>PGDrive Pygame Rewrite</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li><strong>PGDrive rewritten as pure-pygame top-down driving game</strong> (<code>com.okamaos.pgdrive</code> v0.2.0): self-contained, no panda3d/gym/Cython, starts instantly at 30 fps</li>
+            <li>Procedurally generated road network (seeded 12&times;12 grid graph, 85% edge density)</li>
+            <li>Arcade car physics: acceleration, friction, speed-dependent steering, reverse</li>
+            <li>10 NPC cars with autonomous road navigation</li>
+            <li>Smooth camera follow, minimap, HUD (speed bar, gear, timer), help overlay</li>
+            <li><code>okama-inputd</code> InputClient + pygame keyboard/joystick dual-input stack</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v0.6.1 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v0.6.1</span>
+          <span class="ver-date">2026-04</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>Auto-Pack Agent</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li><strong><code>okama-agent auto-pack</code></strong>: analyse any game directory, auto-detect entry/runtime/deps, generate manifest, bundle deps, build <code>.ok</code> in one command</li>
+            <li><code>_detect_game_info()</code>: scans for <code>main.py</code>/<code>index.html</code>/<code>game.py</code>, parses <code>requirements.txt</code>/<code>pyproject.toml</code>/<code>setup.py</code></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- v0.6.0 -->
+      <div class="cl-entry" data-tags="os">
+        <div class="cl-header">
+          <span class="ver-badge">v0.6.0</span>
+          <span class="ver-date">2026-04</span>
+          <span class="ver-tag os">OS</span>
+        </div>
+        <h3>Game Store &amp; Standalone Packages</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li><strong>Game Store UI</strong>: browse remote catalog, view size/version/category, one-press download+install with live progress bar</li>
+            <li><strong><code>okamaos.store</code> module</strong>: <code>fetch_catalog()</code>, <code>download_game()</code> with SHA-256 checksum, <code>format_size()</code></li>
+            <li><strong>Standalone <code>.ok</code> packages</strong>: <code>okama-run</code> prepends <code>site-packages/</code> and <code>lib/</code> from game dir; games run without system-wide installs</li>
+            <li><strong>Settings &rarr; Updates sub-screen</strong>: OS version display, remote update check (async), local <code>.ok-update</code> file scanner</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Portal entries -->
+      <div class="cl-entry" data-tags="pages">
+        <div class="cl-header">
+          <span class="ver-badge">Portal v2.0.0</span>
+          <span class="ver-date">2026-05-02</span>
+          <span class="ver-tag pages">Portal</span>
+        </div>
+        <h3>Ecosystem Hub</h3>
+        <div class="change-group">
+          <h4>Added</h4>
+          <ul class="change-items">
+            <li><strong><code>docs.html</code></strong>: full OS documentation hub — architecture, build guide, package format, OTA, controllers, Bluetooth, security model; sticky sidebar with IntersectionObserver active tracking</li>
+            <li><strong><code>packages.html</code></strong>: complete command reference for all <code>okama-*</code> packages and the dev console</li>
+            <li><strong><code>changelog.html</code></strong>: full release history with component filter (OS / Studio / Portal)</li>
+            <li><strong><code>studio.html</code></strong>: Okama Studio landing page with feature overview, getting started guide, AI tools reference, and <code>.ok</code> export guide</li>
+            <li>Ecosystem overview cards section on index linking to all pages</li>
+          </ul>
+        </div>
+        <div class="change-group">
+          <h4>Changed</h4>
+          <ul class="change-items">
+            <li>Navigation updated across all pages: Docs, Packages, Studio, Games, Updates, Changelog</li>
+            <li>Hero updated to v1.3.0, Studio v0.3.0 status panel added</li>
+            <li>Update section points to v1.3.0 bundle and changelog page</li>
+            <li><code>app.js</code>: canvas and catalog/update loading made conditional by element presence — shared across all pages</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="cl-entry" data-tags="pages">
+        <div class="cl-header">
+          <span class="ver-badge">Portal v1.3.0</span>
+          <span class="ver-date">2026-05-02</span>
+          <span class="ver-tag pages">Portal</span>
+        </div>
+        <h3>v1.3.0 devlink</h3>
+        <div class="change-group">
+          <h4>Published</h4>
+          <ul class="change-items">
+            <li>Published <code>okamaos-v1.3.0.okupdate</code> system update bundle</li>
+            <li>Updated <code>feed.json</code> to v1.3.0 with SHA-256 and size metadata</li>
+            <li>Previous v1.0.2 archived in <code>previous</code> array in feed.json</li>
+          </ul>
+        </div>
+      </div>
+
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <img class="footer-logo" src="assets/okama-logo.svg" width="160" height="46" alt="OkamaOS">
+        <span>Console-grade Linux for low-cost x86_64 PCs.</span>
+      </div>
+      <nav aria-label="Footer navigation">
+        <a href="docs.html">Docs</a>
+        <a href="packages.html">Packages</a>
+        <a href="studio.html">Studio</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="catalog/apps.json">Catalog JSON</a>
+        <a href="updates/feed.json">Update Feed</a>
+      </nav>
+    </footer>
+
+    <script src="app.js"></script>
+    <script>
+      (function () {
+        const btns = document.querySelectorAll(".filter-btn");
+        const entries = document.querySelectorAll(".cl-entry");
+        btns.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            btns.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            const f = btn.dataset.filter;
+            entries.forEach((e) => {
+              const tags = (e.dataset.tags || "").split(" ");
+              e.style.display = f === "all" || tags.includes(f) ? "" : "none";
+            });
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
