@@ -1,5 +1,18 @@
 # OkamaOS Portal Changelog
 
+## 2026-05-02 - Mobile-first polish (v2.1.0)
+
+- Fixed: Global `h1` font-size was `clamp(3.25rem, 10.4vw, 8.8rem)` causing page titles to overflow inner pages; reduced to `clamp(2.2rem, 5.5vw, 5rem)` and added `!important` override on `.page-hero h1`.
+- Fixed: Canvas animation bleeding through transparent page sections — added `background: var(--ink)` to `main`, `.hero`, `.page-hero`, `.docs-wrap`, `.docs-sidebar`.
+- Added: Mobile hamburger nav (≤720px) with animated X toggle, full-width dropdown, Escape to close, focus return — wired in all pages via `app.js initMobileNav()`.
+- Added: "Get OkamaOS" download section on index.html with three installation paths: Live USB (Balena Etcher), VirtualBox VM, and Build from source — each with numbered step-by-step guides.
+- Added: Studio CTA bar on the download section linking to `https://okamaos.zyntrix.solutions`.
+- Updated: All "Open Studio" header-action buttons across all pages now link to `https://okamaos.zyntrix.solutions`.
+- Updated: Creator section on index.html rewritten to focus on Studio as the game-building entry point.
+- Fixed: Docs sidebar breakpoint changed from 860px to 640px so sidebar stays visible on typical desktop/tablet widths.
+- Fixed: `overflow-x: hidden` on `body` prevents horizontal scroll on mobile.
+- Fixed: `@media (max-width: 520px)` improvements for install cards, eco-grid, studio CTA bar.
+
 ## 2026-05-02 - Ecosystem Hub (v2.0.0)
 
 - Full site overhaul: portal is now the source of truth for the entire OkamaOS ecosystem.
