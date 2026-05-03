@@ -1,0 +1,4412 @@
+#!/usr/bin/env python3
+"""okama-shell — OkamaOS fullscreen controller-first UI shell.
+
+Designed for Pygame on a framebuffer. No window manager, no desktop.
+
+Boot flow: init → S99okama-shell → okama-shell (loops forever)
+In-shell flow: home → navigate sections → launch game → game exits → home
+
+Sections (MVP):
+  Play | Settings | Power
+
+Controller mapping (reads from okama-inputd socket):
+  D-pad / LSTICK: navigate
+  A: select
+  B: back
+  START: home
+  HOME: quick-menu
+
+Keyboard:
+  Arrow / WASD → navigate, Enter / Space → select, Esc → back, Tab → next section
+
+Mouse:
+  Hover highlights buttons, left-click selects
+"""
+
+import sys
+import os
+import math
+import time as _time_mod
+
+_lib = os.environ.get("OKAMA_LIB", "")
+if not _lib:
+    _lib = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../lib")
+sys.path.insert(0, os.path.abspath(_lib))
+
+import re
+import subprocess
+import time
+import json
+import argparse
+import struct
+import threading
+import queue
+import pty
+import glob
+import shutil
+import datetime
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+_ANSI_RE = re.compile(
+    r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|[()][0-9A-Za-z])'
+)
+
+# ---------------------------------------------------------------------------
+# Evdev keyboard reader — used when SDL offscreen driver has no input
+# ---------------------------------------------------------------------------
+# Linux input_event struct: timeval(8) + type(2) + code(2) + value(4) = 24 bytes
+_EVDEV_FMT = "llHHi"
+_EVDEV_SZ  = struct.calcsize(_EVDEV_FMT)
+_EV_KEY    = 0x01
+_KEY_RELEASE = 0
+_KEY_PRESS = 1
+_KEY_REPEAT = 2
+
+# evdev keycodes → okama actions
+_EVDEV_KEY_MAP = {
+    103: "DPAD_UP",    # KEY_UP
+    108: "DPAD_DOWN",  # KEY_DOWN
+    105: "DPAD_LEFT",  # KEY_LEFT
+    106: "DPAD_RIGHT", # KEY_RIGHT
+    17:  "DPAD_UP",    # KEY_W
+    31:  "DPAD_DOWN",  # KEY_S
+    30:  "DPAD_LEFT",  # KEY_A
+    32:  "DPAD_RIGHT", # KEY_D
+    28:  "ENTER",      # KEY_ENTER
+    14:  "BACKSPACE",  # KEY_BACKSPACE
+    57:  "A",          # KEY_SPACE
+    1:   "B",          # KEY_ESC
+    15:  "DPAD_RIGHT", # KEY_TAB
+    102: "START",      # KEY_HOME
+    21:  "Y",          # KEY_Y
+    45:  "X",          # KEY_X
+    16:  "_QUIT_DEV",  # KEY_Q  (dev-mode quit)
+    68:  "DEV_CONSOLE", # KEY_F10
+}
+
+# evdev keycodes -> characters for typing. Shift is tracked in
+# _EvdevKeyboardReader so command text remains usable when SDL has no input.
+_EVDEV_CHAR_MAP = {
+    2: "1", 3: "2", 4: "3", 5: "4", 6: "5", 7: "6", 8: "7", 9: "8", 10: "9", 11: "0",
+    16: "q", 17: "w", 18: "e", 19: "r", 20: "t", 21: "y", 22: "u", 23: "i", 24: "o", 25: "p",
+    30: "a", 31: "s", 32: "d", 33: "f", 34: "g", 35: "h", 36: "j", 37: "k", 38: "l",
+    44: "z", 45: "x", 46: "c", 47: "v", 48: "b", 49: "n", 50: "m",
+    57: " ",  # space
+    12: "-", 13: "=",
+    26: "[", 27: "]",
+    39: ";", 40: "'", 41: "`",  # semicolon, apostrophe, grave
+    43: "\\",
+    51: ",", 52: ".", 53: "/",  # comma, dot, slash
+    55: "*", 74: "-", 78: "+",
+}
+
+_EVDEV_SHIFT_CHAR_MAP = {
+    2: "!", 3: "@", 4: "#", 5: "$", 6: "%", 7: "^", 8: "&", 9: "*", 10: "(", 11: ")",
+    12: "_", 13: "+",
+    16: "Q", 17: "W", 18: "E", 19: "R", 20: "T", 21: "Y", 22: "U", 23: "I", 24: "O", 25: "P",
+    26: "{", 27: "}",
+    30: "A", 31: "S", 32: "D", 33: "F", 34: "G", 35: "H", 36: "J", 37: "K", 38: "L",
+    39: ":", 40: "\"", 41: "~",
+    43: "|",
+    44: "Z", 45: "X", 46: "C", 47: "V", 48: "B", 49: "N", 50: "M",
+    51: "<", 52: ">", 53: "?",
+}
+
+_EVDEV_SHIFT_KEYS = {42, 54}
+_EVDEV_CAPS_LOCK = 58
+_EVDEV_TEXT_CONTROL_KEYS = {1, 14, 28, 68, 103, 108}  # Esc, Backspace, Enter, F10, Up, Down
+_EVIOCGNAME = 0x80ff4506
+
+
+def _evdev_keyboard_name(path: str) -> str | None:
+    import fcntl
+    try:
+        with open(path, "rb") as fd:
+            buf = bytearray(256)
+            fcntl.ioctl(fd, _EVIOCGNAME, buf)
+            name = buf.decode(errors="replace").rstrip("\x00").strip()
+    except OSError:
+        return None
+    lowered = name.lower()
+    if "keyboard" in lowered or lowered.endswith("kbd") or "at translated set" in lowered:
+        return name
+    return None
+
+class _EvdevKeyboardReader:
+    """Reads keyboard events directly from evdev when SDL can't receive input."""
+    def __init__(self):
+        self._q: queue.Queue = queue.Queue()
+        self._char_q: queue.Queue = queue.Queue()
+        self._stop = threading.Event()
+        self._threads = []
+        self._shift_down = False
+        self._caps_lock = False
+        self._held_codes: set = set()
+        self._started = False
+
+    def start(self):
+        keyboards = []
+        for path in sorted(glob.glob("/dev/input/event*")):
+            name = _evdev_keyboard_name(path)
+            if name is not None:
+                legacy = "at translated set" in name.lower()
+                keyboards.append(((1 if legacy else 0, name.lower()), path))
+        for _, path in sorted(keyboards):
+            t = threading.Thread(target=self._read, args=(path,), daemon=True)
+            t.start()
+            self._threads.append(t)
+            self._started = True
+            break
+
+    def stop(self):
+        self._stop.set()
+
+    def _read(self, path):
+        try:
+            with open(path, "rb") as f:
+                while not self._stop.is_set():
+                    data = f.read(_EVDEV_SZ)
+                    if len(data) < _EVDEV_SZ:
+                        break
+                    _, _, etype, code, value = struct.unpack(_EVDEV_FMT, data)
+                    if etype != _EV_KEY:
+                        continue
+                    if code in _EVDEV_SHIFT_KEYS:
+                        if value == _KEY_PRESS:
+                            self._shift_down = True
+                        elif value == _KEY_RELEASE:
+                            self._shift_down = False
+                        continue
+                    if code == _EVDEV_CAPS_LOCK:
+                        if value == _KEY_PRESS:
+                            self._caps_lock = not self._caps_lock
+                        continue
+                    if value == _KEY_PRESS:
+                        if code in self._held_codes:
+                            continue
+                        self._held_codes.add(code)
+                        self._q.put(code)
+                        char = self._char_for(code)
+                        if char:
+                            self._char_q.put(char)
+                    elif value == _KEY_REPEAT:
+                        nav_codes = {103, 108, 105, 106, 17, 31, 30, 32, 14}
+                        if code in nav_codes:
+                            self._q.put(code)
+                        char = self._char_for(code)
+                        if char:
+                            self._char_q.put(char)
+                    elif value == _KEY_RELEASE:
+                        self._held_codes.discard(code)
+        except OSError:
+            pass
+
+    def _char_for(self, code: int) -> str | None:
+        base = _EVDEV_CHAR_MAP.get(code)
+        if base and len(base) == 1 and base.isalpha():
+            return base.upper() if (self._shift_down ^ self._caps_lock) else base
+        if self._shift_down:
+            return _EVDEV_SHIFT_CHAR_MAP.get(code) or base
+        return base
+
+    def drain(self) -> list:
+        codes = []
+        try:
+            while True:
+                codes.append(self._q.get_nowait())
+        except queue.Empty:
+            pass
+        return codes
+
+    def drain_chars(self) -> list:
+        chars = []
+        try:
+            while True:
+                chars.append(self._char_q.get_nowait())
+        except queue.Empty:
+            pass
+        return chars
+
+_evdev_kb: _EvdevKeyboardReader | None = None
+
+# ---------------------------------------------------------------------------
+# Pygame bootstrap — graceful degradation if not available
+# ---------------------------------------------------------------------------
+_PYGAME_ERR = ""
+try:
+    import pygame
+    PYGAME_OK = True
+except Exception as _e:
+    PYGAME_OK = False
+    _PYGAME_ERR = str(_e)
+
+from okamaos.input_protocol import InputClient
+import okamaos.config as cfg_mod
+import okamaos.games as games_mod
+import okamaos.bluetooth as bt_mod
+import okamaos.package as pkg_mod
+import okamaos.manifest as manifest_mod
+try:
+    import okamaos.store as store_mod
+except ImportError:
+    store_mod = None
+try:
+    import okamaos.updates as updates_mod
+except ImportError:
+    updates_mod = None
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+WIDTH, HEIGHT = 1280, 720
+FPS = 60
+
+# -- Color palette (OkamaLabs First Wave theme) --
+COL_BG         = (0,    4,   13)
+COL_BG2        = (2,   12,   30)
+COL_ACCENT     = (0,  190,  255)
+COL_ACCENT2    = (0,  230,  118)
+COL_ACCENT_HOT = (255,  36, 112)
+COL_TEXT       = (242, 246, 252)
+COL_TEXT2      = (190, 202, 222)
+COL_DIM        = (132, 148, 176)
+COL_SELECTED   = (2,   18,  36)
+COL_SEL_HOVER  = (4,   28,  52)
+COL_CARD       = (3,   10,  25)
+COL_CARD_HOV   = (8,   20,  42)
+COL_BORDER     = (0,   88, 130)
+COL_WARN       = (255, 184,  42)
+COL_OK         = (0,   220, 110)
+COL_ERROR      = (255,  40,  80)
+COL_PLAY       = (0,   190, 255)
+COL_POWER      = (255,  36, 112)
+COL_SETTINGS   = (0,   230, 118)
+COL_STORE      = (178,  80, 255)
+COL_UPDATE     = (255, 195,  35)
+COL_DEV        = (255,  60, 180)
+
+SECTIONS = ["Play", "Settings", "Power"]
+SECTION_ICONS = [">", "*", "O"]
+SECTION_COLORS = [COL_PLAY, COL_SETTINGS, COL_POWER]
+
+POWER_OPTIONS  = ["Restart", "Shut Down", "Cancel"]
+SETTINGS_OPTIONS = [
+    "Controllers",
+    "Bluetooth",
+    "Audio",
+    "Network",
+    "Storage Info",
+    "Updates",
+    "Install / Persistence",
+    "Wallet",
+    "Support",
+]
+
+_UPDATE_ACTIONS_BASE = [
+    "Check for Updates",
+    "Download OS Update",
+    "Apply Downloaded Update",
+    "Download Game Updates",
+    "Rollback Last Update",
+]
+
+HINT_KB   = "[<>] Navigate   [Enter] Select   [Esc] Back   [Tab] Section"
+HINT_CTRL = "[^v] Navigate   [A] Select   [B] Back   [START] Home"
+
+
+def _okama_run_path() -> str:
+    """Resolve okama-run for both installed OS and repo-local host runs."""
+    override = os.environ.get("OKAMA_RUN")
+    if override:
+        return override
+    sibling = os.path.join(os.path.dirname(os.path.realpath(__file__)), "okama-run")
+    if os.path.exists(sibling):
+        return sibling
+    return "/usr/bin/okama-run"
+
+
+def _exec_okama_run(game_id: str) -> None:
+    run_path = _okama_run_path()
+    os.execv(run_path, ["okama-run", game_id])
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _lerp_color(a, b, t):
+    t = max(0.0, min(1.0, t))
+    return (int(a[0] + (b[0]-a[0])*t),
+            int(a[1] + (b[1]-a[1])*t),
+            int(a[2] + (b[2]-a[2])*t))
+
+def _alpha_surf(w, h, color, alpha):
+    s = pygame.Surface((w, h), pygame.SRCALPHA)
+    s.fill((*color, alpha))
+    return s
+
+
+SAST_TZ = datetime.timezone(datetime.timedelta(hours=2), "SAST")
+
+
+def _sast_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc).astimezone(SAST_TZ)
+
+
+def _okama_update_path() -> str:
+    sibling = os.path.join(os.path.dirname(os.path.realpath(__file__)), "okama-update")
+    if os.path.exists(sibling):
+        return sibling
+    return "/usr/bin/okama-update"
+
+
+def _safe_download_name(raw: str, fallback: str) -> str:
+    name = os.path.basename(urllib.parse.urlparse(raw or "").path) or fallback
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
+    return safe or fallback
+
+
+def _fmt_bytes(size_bytes: int) -> str:
+    try:
+        value = float(size_bytes)
+    except (TypeError, ValueError):
+        value = 0.0
+    units = ("B", "KB", "MB", "GB", "TB")
+    idx = 0
+    while value >= 1024 and idx < len(units) - 1:
+        value /= 1024.0
+        idx += 1
+    if idx == 0:
+        return f"{int(value)} {units[idx]}"
+    return f"{value:.1f} {units[idx]}"
+
+
+# ---------------------------------------------------------------------------
+# Fallback text renderer (no Pygame)
+# ---------------------------------------------------------------------------
+def _text_shell(reason: str = ""):
+    """Minimal text-mode shell for terminals / no-Pygame environments."""
+    conf = cfg_mod.get()
+    print("\n" + "=" * 48)
+    print("  OkamaOS Shell  (text mode)")
+    if reason:
+        print(f"  Reason: {reason[:80]}")
+    elif _PYGAME_ERR:
+        print(f"  Reason: {_PYGAME_ERR[:80]}")
+    print("=" * 48)
+
+    while True:
+        games = games_mod.list_installed()
+        print("\nInstalled games:")
+        for i, g in enumerate(games):
+            print(f"  [{i+1}] {g['name']} ({g['id']})")
+        print("  [p] Power off")
+        print("  [r] Reboot")
+        print("  [q] Exit shell (dev mode only)")
+
+        try:
+            choice = input("\nSelect > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if choice == "q":
+            if conf.is_dev_mode():
+                break
+            print("Not in developer mode.")
+        elif choice == "p":
+            subprocess.call(["poweroff"])
+        elif choice == "r":
+            subprocess.call(["reboot"])
+        elif choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(games):
+                gid = games[idx]["id"]
+                _exec_okama_run(gid)
+            else:
+                print("Invalid selection.")
+
+
+# ---------------------------------------------------------------------------
+# Pygame shell
+# ---------------------------------------------------------------------------
+class OkamaShell:
+    def __init__(self, windowed: bool = False, dev_mode: bool = False):
+        global WIDTH, HEIGHT
+        self.windowed = windowed
+        self.dev_mode = dev_mode
+        self.conf = cfg_mod.get()
+
+        if windowed:
+            flags = 0
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT), flags)
+        elif os.environ.get("SDL_VIDEODRIVER") == "offscreen":
+            # offscreen backend has no real display; FULLSCREEN flag is meaningless
+            # WIDTH/HEIGHT were already set to framebuffer dimensions before init
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.DOUBLEBUF)
+        else:
+            # kmsdrm and similar DRM backends support FULLSCREEN properly
+            flags = pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF
+            self.screen = pygame.display.set_mode((0, 0), flags)
+            # Update global layout dimensions to match actual framebuffer size
+            WIDTH, HEIGHT = self.screen.get_size()
+        pygame.display.set_caption("OkamaOS")
+        pygame.mouse.set_visible(True)
+        pygame.key.set_repeat(280, 80)
+
+        self.clock = pygame.time.Clock()
+        self._init_fonts()
+
+        self.input_client = InputClient()
+        self.input_client.connect()
+
+        # When using offscreen SDL driver, pygame receives no keyboard events.
+        # Fall back to reading evdev directly.
+        global _evdev_kb
+        if os.environ.get("SDL_VIDEODRIVER") == "offscreen":
+            _evdev_kb = _EvdevKeyboardReader()
+            _evdev_kb.start()
+
+        self.state = "home"       # home | play | settings | power | launching
+        self.section_idx = 0
+        self.list_idx = 0
+        self.settings_idx = 0
+        self.power_idx = 0
+        self._installed_system = self._detect_installed_system()
+        self.message = ""
+        self.message_timer = 0
+
+        self.games = []
+        self._refresh_games()
+
+        self._input_cooldown = 0
+        self._axis_threshold = 0.5
+        self._axis_held: dict = {}
+
+        # Settings sub-screen state
+        self.ctrl_idx = 0
+        self.controllers_info = []
+        self._bt_action_items = []
+        self._bt_powered = False
+        self.bt_devices = []
+        self.bt_scanning = False
+        self.bt_dev_idx = 0
+        self.audio_volume = 80
+        self.net_info = []
+        self.net_idx = 0
+        self.storage_info = []
+        self.storage_idx = 0
+        # Install browse state
+        self.install_files = []
+        self.install_idx = 0
+        self.install_status = ""
+
+        # Game store state
+        self.store_catalog: list = []
+        self._store_url_input: str = ""
+        self.store_status: str = ""
+        self.store_scroll = 0
+        self.store_status = ""
+        self.store_loading = False
+        self._store_dl_progress: tuple = (0, 0)
+
+        # System update state
+        self.update_idx = 0
+        self.update_status = ""
+        self.update_info: dict = {}
+        self.update_loading = False
+        self._update_local_files: list = []
+        self.update_summary: dict = updates_mod.read_update_state() if updates_mod else {}
+        self._last_update_check = 0.0
+        self._next_update_check = time.monotonic() + 5.0
+        self._update_thread = None
+        self._update_download_progress: tuple = (0, 0)
+        self._update_file_idx: int = 0
+        self._pending_update_file: str = ""
+        self._bt_label_cache: tuple = (0.0, "Off")
+
+        # Install / persistence state
+        self.install_system_idx = 0
+        self.install_system_lines = []
+        self.install_system_status = ""
+
+        # Wallet state
+        self._wallet_info: list = []
+        self._wallet_status: str = ""
+        self._wallet_pin_input: str = ""
+        self._wallet_pin_error: str = ""
+
+        # Update catalog (dev mode)
+        self._update_catalog_entries: list = []
+        self._update_catalog_idx: int = 0
+        self._update_catalog_status: str = ""
+
+        # Animation / visual state
+        self._tick = 0            # frame counter for animations
+        self._mouse_pos = (0, 0)
+        self._mouse_moved = False
+        self._hovered = None      # currently hovered widget id
+        self._sel_anim = 0.0      # selection highlight lerp [0..1]
+        self._prev_section = 0
+        self._bg_surf = None
+
+        # Text input
+        self._char_buf: list = []
+        # Dev console
+        self._dev_console_history: list = []
+        self._dev_console_cmd = ""
+        self._dev_console_scroll = 0
+        self._dev_shell_proc = None
+        self._dev_shell_fd = None
+        self._dev_shell_reader = None
+        self._dev_console_lock = threading.Lock()
+        self._dev_terminal_line = ""
+        self._dev_command_history: list = []
+        self._dev_history_idx = None
+        self._dev_history_draft = ""
+        # WiFi scan/connect
+        self.wifi_scan_iface = ""
+        self.wifi_networks: list = []
+        self.wifi_scan_idx = 0
+        self.wifi_scanning = False
+        self.wifi_psk_ssid = ""
+        self.wifi_psk_iface = ""
+        self.wifi_psk_input = ""
+        self.wifi_connect_status = ""
+        self._build_bg()
+
+    def _build_bg(self):
+        """Pre-render the First Wave horizon grid background."""
+        surf = pygame.Surface((WIDTH, HEIGHT))
+        for y in range(HEIGHT):
+            t = y / HEIGHT
+            r = int(COL_BG[0] + (COL_BG2[0]-COL_BG[0]) * t)
+            g = int(COL_BG[1] + (COL_BG2[1]-COL_BG[1]) * t)
+            b = int(COL_BG[2] + (COL_BG2[2]-COL_BG[2]) * t)
+            pygame.draw.line(surf, (r, g, b), (0, y), (WIDTH, y))
+        grid = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        horizon = int(HEIGHT * 0.46)
+        for x in range(0, WIDTH, 58):
+            pygame.draw.line(grid, (*COL_ACCENT, 18), (x, 0), (x, horizon), 1)
+        for y in range(80, horizon, 42):
+            pygame.draw.line(grid, (*COL_ACCENT, 16), (0, y), (WIDTH, y), 1)
+        center = WIDTH // 2
+        for x in range(-WIDTH, WIDTH * 2, 90):
+            color = (*COL_ACCENT2, 80) if x % 180 == 0 else (*COL_ACCENT, 45)
+            pygame.draw.line(grid, color, (center, horizon), (x, HEIGHT), 1)
+        y = horizon
+        step = 18
+        while y < HEIGHT:
+            alpha = min(120, 25 + int((y - horizon) / max(1, HEIGHT - horizon) * 120))
+            pygame.draw.line(grid, (*COL_ACCENT, alpha), (0, y), (WIDTH, y), 1)
+            step = int(step * 1.16) + 2
+            y += step
+        for y in range(0, HEIGHT, 6):
+            pygame.draw.line(grid, (255, 255, 255, 4), (0, y), (WIDTH, y), 1)
+        pygame.draw.line(grid, (*COL_ACCENT, 80), (0, horizon), (WIDTH, horizon), 1)
+        surf.blit(grid, (0, 0))
+        self._bg_surf = surf
+
+    def _init_fonts(self):
+        try:
+            pygame.font.init()
+        except Exception as e:
+            print(f"WARNING: pygame.font.init failed ({e}), using fallback", file=sys.stderr)
+        fonts = ["DejaVu Sans", "Liberation Sans", "Arial", "FreeSans"]
+        def _sys(size, bold=False):
+            for name in fonts:
+                try:
+                    return pygame.font.SysFont(name, size, bold=bold)
+                except Exception:
+                    pass
+            return pygame.font.Font(None, size)
+        try:
+            self.font_xl   = _sys(68, bold=True)
+            self.font_lg   = _sys(38, bold=True)
+            self.font_md   = _sys(26)
+            self.font_mdb  = _sys(26, bold=True)
+            self.font_sm   = _sys(20)
+            self.font_hint = _sys(17)
+            self.font_icon = _sys(32)
+        except Exception:
+            default = pygame.font.Font(None, 36)
+            self.font_xl = self.font_lg = self.font_md = self.font_mdb = \
+                self.font_sm = self.font_hint = self.font_icon = default
+
+    def _refresh_games(self):
+        self.games = games_mod.list_installed()
+
+    def _detect_installed_system(self) -> bool:
+        markers = [
+            "/etc/okamaos/install-state.conf",
+            "/boot/extlinux/extlinux.conf",
+        ]
+        for path in markers:
+            if os.path.exists(path):
+                if path.endswith("install-state.conf"):
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            if "INSTALLED=yes" in f.read():
+                                return True
+                    except OSError:
+                        pass
+                else:
+                    return True
+        try:
+            with open("/proc/cmdline", encoding="utf-8") as f:
+                cmdline = f.read()
+            return "root=PARTUUID=" in cmdline and "boot=live" not in cmdline
+        except OSError:
+            return False
+
+    def _settings_options(self) -> list:
+        opts = list(SETTINGS_OPTIONS)
+        if self._installed_system and not self.dev_mode:
+            opts = [o for o in opts if o != "Install / Persistence"]
+        return opts
+
+    def _os_version(self) -> str:
+        if updates_mod:
+            try:
+                version = updates_mod.current_version()
+                if version and version != "unknown":
+                    return version
+            except Exception:
+                pass
+        return self.conf.get("VERSION", "unknown")
+
+    def _sast_time(self, fmt: str = "%H:%M") -> str:
+        try:
+            return _sast_now().strftime(fmt).lstrip("0") or "0"
+        except Exception:
+            return "--:--"
+
+    def _downloads_dir(self) -> str:
+        base = self.conf.get("UPDATES_DIR", "/var/okamaos/updates")
+        path = os.path.join(base, "downloads")
+        try:
+            os.makedirs(path, exist_ok=True)
+            return path
+        except OSError:
+            fallback = "/tmp/okamaos-downloads"
+            os.makedirs(fallback, exist_ok=True)
+            return fallback
+
+    def _game_downloads_dir(self) -> str:
+        path = self.conf.get("GAME_DOWNLOADS_DIR", "/var/okamaos/downloads")
+        try:
+            os.makedirs(path, exist_ok=True)
+            return path
+        except OSError:
+            fallback = "/tmp/okamaos-game-downloads"
+            os.makedirs(fallback, exist_ok=True)
+            return fallback
+
+    def _rescan_media(self) -> None:
+        candidates = [
+            shutil.which("okama-mount-media"),
+            os.path.join(os.path.dirname(os.path.realpath(__file__)), "okama-mount-media"),
+            "/usr/bin/okama-mount-media",
+        ]
+        script = next((p for p in candidates if p and os.path.exists(p)), "")
+        if not script:
+            return
+        try:
+            subprocess.run([script], capture_output=True, timeout=8)
+        except Exception:
+            pass
+
+    def _file_search_roots(self) -> list:
+        roots = [
+            self._downloads_dir(),
+            self._game_downloads_dir(),
+            "/var/okamaos/updates",
+            "/media",
+            "/mnt",
+            "/run/media",
+            "/tmp",
+        ]
+        pseudo = {"proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "overlay", "squashfs"}
+        try:
+            with open("/proc/mounts", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 3 or parts[2] in pseudo:
+                        continue
+                    mountpoint = parts[1].replace("\\040", " ")
+                    if mountpoint == "/":
+                        continue
+                    if mountpoint.startswith(("/media", "/mnt", "/run/media", "/var/okamaos")):
+                        roots.append(mountpoint)
+        except OSError:
+            pass
+        deduped = []
+        seen = set()
+        for root in roots:
+            if root and root not in seen and os.path.isdir(root):
+                deduped.append(root)
+                seen.add(root)
+        return deduped
+
+    def _find_files(self, suffixes: tuple, max_results: int = 200) -> list:
+        self._rescan_media()
+        results = []
+        seen = set()
+        for base in self._file_search_roots():
+            try:
+                for root, _dirs, files in os.walk(base):
+                    for fname in sorted(files):
+                        if not fname.endswith(suffixes):
+                            continue
+                        path = os.path.join(root, fname)
+                        if path in seen:
+                            continue
+                        results.append(path)
+                        seen.add(path)
+                        if len(results) >= max_results:
+                            return sorted(results)
+            except Exception:
+                pass
+        return sorted(results)
+
+    def _show_message(self, msg: str, duration: float = 2.5):
+        self.message = msg
+        self.message_timer = int(duration * FPS)
+
+    def _update_count(self) -> int:
+        summary = self.update_summary or {}
+        count = summary.get("count")
+        if isinstance(count, int):
+            return count
+        return (1 if summary.get("os_update") else 0) + len(summary.get("game_updates", []))
+
+    def _update_label(self) -> str:
+        if self.update_loading:
+            return "Working"
+        count = self._update_count()
+        if count:
+            return f"{count} update{'s' if count != 1 else ''}"
+        if self.update_summary.get("errors"):
+            return "Check failed"
+        if self.update_summary.get("checked_at"):
+            return "Up to date"
+        return "Updates"
+
+    def _update_interval(self) -> float:
+        try:
+            return max(60.0, float(self.conf.get("UPDATE_CHECK_INTERVAL_SEC", "21600")))
+        except (TypeError, ValueError):
+            return 21600.0
+
+    def _maybe_check_updates(self, force: bool = False):
+        if updates_mod is None:
+            return
+        if self.conf.get("UPDATE_NOTIFICATIONS", "yes").lower() != "yes":
+            return
+        now = time.monotonic()
+        if not force and now < self._next_update_check:
+            return
+        if self._update_thread and self._update_thread.is_alive():
+            return
+
+        self.update_loading = True
+        self._last_update_check = now
+        self._next_update_check = now + self._update_interval()
+
+        def _work():
+            try:
+                summary = updates_mod.check_all_updates(installed=self.games)
+                self.update_summary = summary
+                self.update_info = summary.get("os_update") or {}
+                count = summary.get("count", 0)
+                if count:
+                    self.update_status = f"{count} update{'s' if count != 1 else ''} available"
+                    self._show_message(self.update_status, duration=4.0)
+                elif summary.get("errors"):
+                    self.update_status = summary["errors"][0][:80]
+                else:
+                    self.update_status = f"OkamaOS v{updates_mod.current_version()} is up to date."
+                try:
+                    updates_mod.write_update_state(summary)
+                except Exception:
+                    pass
+            except Exception as e:
+                self.update_summary = {"errors": [str(e)], "count": 0}
+                self.update_status = f"Check failed: {str(e)[:60]}"
+            finally:
+                self.update_loading = False
+
+        self._update_thread = threading.Thread(target=_work, daemon=True)
+        self._update_thread.start()
+
+    def run(self, fb=None):
+        running = True
+        while running:
+            self.clock.tick(FPS)
+            self._tick += 1
+            events = self._collect_events()
+
+            for e in events:
+                if e.get("type") == "QUIT":
+                    running = False
+
+            self._handle_input(events)
+            self._maybe_check_updates()
+
+            self._draw()
+            if fb:
+                fb.present(self.screen)
+
+            if self.message_timer > 0:
+                self.message_timer -= 1
+
+        pygame.quit()
+
+    # -----------------------------------------------------------------------
+    # Input collection (controller socket + keyboard + mouse)
+    # -----------------------------------------------------------------------
+    def _collect_events(self) -> list:
+        events = []
+
+        # Clear char buffer each frame; state handlers will process it
+        self._char_buf.clear()
+        text_entry = self._is_text_entry_state()
+
+        # Controller events from okama-inputd
+        for ev in self.input_client.poll():
+            # Keyboard fallback events are for launched games. The shell has
+            # its own SDL/evdev keyboard path, so consuming controller -1 here
+            # double-triggers menu navigation and selection.
+            if ev.get("controller") == -1:
+                continue
+            if ev.get("type") == "button" and ev.get("state") == "pressed":
+                events.append({"src": "controller", "action": ev["button"]})
+            elif ev.get("type") == "axis":
+                self._handle_axis_to_dpad(ev, events)
+
+        # Keyboard + mouse via SDL (works on kmsdrm / x11 / windowed)
+        for pev in pygame.event.get():
+            if pev.type == pygame.QUIT:
+                events.append({"type": "QUIT"})
+
+            elif pev.type == pygame.KEYDOWN:
+                k = pev.key
+                # Capture printable chars for text entry (dev console, WiFi PSK)
+                if pev.unicode and pev.unicode >= " ":
+                    self._char_buf.append(pev.unicode)
+                control_mapping = {
+                    pygame.K_RETURN: "ENTER",
+                    pygame.K_KP_ENTER: "ENTER",
+                    pygame.K_BACKSPACE: "BACKSPACE",
+                    pygame.K_ESCAPE: "B",
+                    pygame.K_UP: "DPAD_UP",
+                    pygame.K_DOWN: "DPAD_DOWN",
+                    pygame.K_F10: "DEV_CONSOLE",
+                }
+                nav_mapping = {
+                    pygame.K_UP:     "DPAD_UP",
+                    pygame.K_w:      "DPAD_UP",
+                    pygame.K_DOWN:   "DPAD_DOWN",
+                    pygame.K_s:      "DPAD_DOWN",
+                    pygame.K_LEFT:   "DPAD_LEFT",
+                    pygame.K_a:      "DPAD_LEFT",
+                    pygame.K_RIGHT:  "DPAD_RIGHT",
+                    pygame.K_d:      "DPAD_RIGHT",
+                    pygame.K_RETURN: "ENTER",
+                    pygame.K_SPACE:  "A",
+                    pygame.K_ESCAPE: "B",
+                    pygame.K_TAB:    "DPAD_RIGHT",
+                    pygame.K_HOME:   "START",
+                    pygame.K_y:      "Y",
+                    pygame.K_x:      "X",
+                    pygame.K_q:      "QUIT" if self.dev_mode else None,
+                    pygame.K_F10:    "DEV_CONSOLE",
+                }
+                mapping = control_mapping if text_entry else nav_mapping
+                action = mapping.get(k)
+                if action == "QUIT":
+                    events.append({"type": "QUIT"})
+                elif action:
+                    events.append({"src": "keyboard", "action": action})
+
+            elif pev.type == pygame.MOUSEMOTION:
+                self._mouse_pos = pev.pos
+                self._mouse_moved = True
+                pygame.mouse.set_visible(True)
+
+            elif pev.type == pygame.MOUSEBUTTONDOWN and pev.button == 1:
+                events.append({"src": "mouse", "action": "CLICK",
+                               "pos": pev.pos})
+
+        # Evdev keyboard fallback — used when SDL offscreen driver has no input
+        if _evdev_kb is not None:
+            self._char_buf.extend(_evdev_kb.drain_chars())
+            for code in _evdev_kb.drain():
+                if text_entry and code not in _EVDEV_TEXT_CONTROL_KEYS:
+                    continue
+                action = _EVDEV_KEY_MAP.get(code)
+                if action == "_QUIT_DEV" and self.dev_mode:
+                    events.append({"type": "QUIT"})
+                elif action:
+                    events.append({"src": "keyboard", "action": action})
+
+        return events
+
+    def _is_text_entry_state(self) -> bool:
+        return self.state in ("dev_console", "wifi_psk", "store_url_entry",
+                              "settings_wallet_unlock")
+
+    def _handle_axis_to_dpad(self, ev: dict, out: list):
+        axis = ev.get("axis", "")
+        value = ev.get("value", 0.0)
+        prev = self._axis_held.get(axis, 0.0)
+
+        if axis in ("LSTICK_Y", "RSTICK_Y"):
+            if value < -self._axis_threshold and prev >= -self._axis_threshold:
+                out.append({"src": "axis", "action": "DPAD_UP"})
+            elif value > self._axis_threshold and prev <= self._axis_threshold:
+                out.append({"src": "axis", "action": "DPAD_DOWN"})
+        elif axis in ("LSTICK_X", "RSTICK_X"):
+            if value < -self._axis_threshold and prev >= -self._axis_threshold:
+                out.append({"src": "axis", "action": "DPAD_LEFT"})
+            elif value > self._axis_threshold and prev <= self._axis_threshold:
+                out.append({"src": "axis", "action": "DPAD_RIGHT"})
+
+        self._axis_held[axis] = value
+
+    # -----------------------------------------------------------------------
+    # State machine
+    # -----------------------------------------------------------------------
+    def _handle_input(self, events: list):
+        if self._input_cooldown > 0:
+            self._input_cooldown -= 1
+
+        # Text entry is frame-based, not action-based. Otherwise printable
+        # keys with no navigation mapping are lost before command/password input.
+        self._dispatch_text_entry()
+
+        for ev in events:
+            action = ev.get("action")
+            if not action:
+                continue
+            # Mouse clicks bypass cooldown; d-pad/keyboard respect it
+            if ev.get("src") != "mouse" and self._input_cooldown > 0:
+                continue
+            if ev.get("src") != "mouse":
+                self._input_cooldown = max(1, FPS // 12)  # ~80ms at 60 FPS
+
+            self._dispatch(action, ev)
+
+    def _dispatch(self, action: str, ev: dict = None):
+        # F10 unlocks dev console from any state
+        if action == "DEV_CONSOLE":
+            self._dev_console_cmd = ""
+            self._ensure_dev_shell()
+            self._dev_console_history.append(">>> Dev mode unlocked (F10). Type 'help' for commands.")
+            self.state = "dev_console"
+            return
+        if action == "BACKSPACE":
+            if self.state == "dev_console" and self._dev_console_cmd:
+                self._dev_console_cmd = self._dev_console_cmd[:-1]
+            elif self.state == "wifi_psk" and self.wifi_psk_input:
+                self.wifi_psk_input = self.wifi_psk_input[:-1]
+            elif self.state == "store_url_entry" and self._store_url_input:
+                self._store_url_input = self._store_url_input[:-1]
+            elif self.state == "settings_wallet_unlock" and self._wallet_pin_input:
+                self._wallet_pin_input = self._wallet_pin_input[:-1]
+            return
+
+        if self.state == "home":
+            self._home_input(action, ev)
+        elif self.state == "play":
+            self._play_input(action, ev)
+        elif self.state == "settings":
+            self._settings_input(action, ev)
+        elif self.state == "power":
+            self._power_input(action, ev)
+        elif self.state == "settings_controllers":
+            self._settings_controllers_input(action, ev)
+        elif self.state == "settings_bluetooth":
+            self._settings_bluetooth_input(action, ev)
+        elif self.state == "settings_audio":
+            self._settings_audio_input(action, ev)
+        elif self.state == "settings_network":
+            self._settings_network_input(action, ev)
+        elif self.state == "settings_storage":
+            self._settings_storage_input(action, ev)
+        elif self.state == "install_browse":
+            self._install_browse_input(action, ev)
+        elif self.state == "game_store":
+            self._game_store_input(action, ev)
+        elif self.state == "store_url_entry":
+            if action == "BACKSPACE":
+                if self._store_url_input:
+                    self._store_url_input = self._store_url_input[:-1]
+            elif action in ("B", "ENTER"):
+                if action == "ENTER":
+                    self._store_url_confirm()
+                else:
+                    self.state = "game_store"
+        elif self.state == "settings_updates":
+            self._settings_updates_input(action, ev)
+        elif self.state == "settings_update_files":
+            self._settings_update_files_input(action, ev)
+        elif self.state == "settings_update_confirm":
+            self._settings_update_confirm_input(action, ev)
+        elif self.state == "settings_install":
+            self._settings_install_input(action, ev)
+        elif self.state == "settings_wallet":
+            self._settings_wallet_input(action, ev)
+        elif self.state == "settings_wallet_unlock":
+            self._settings_wallet_unlock_input(action, ev)
+        elif self.state == "settings_update_catalog":
+            self._settings_update_catalog_input(action, ev)
+        elif self.state == "settings_support":
+            self._settings_support_input(action, ev)
+        elif self.state == "dev_console":
+            self._dev_console_input(action, ev)
+        elif self.state == "wifi_psk":
+            self._wifi_psk_input(action, ev)
+        elif self.state == "wifi_networks":
+            self._wifi_networks_input(action, ev)
+
+    def _dispatch_text_entry(self):
+        """Process accumulated _char_buf for text-entry states."""
+        if self.state in ("dev_console", "wifi_psk", "store_url_entry",
+                          "settings_wallet_unlock"):
+            for ch in self._char_buf:
+                if ord(ch) == 8:  # Backspace handling via special
+                    if self.state == "dev_console" and self._dev_console_cmd:
+                        self._dev_console_cmd = self._dev_console_cmd[:-1]
+                    elif self.state == "wifi_psk" and self.wifi_psk_input:
+                        self.wifi_psk_input = self.wifi_psk_input[:-1]
+                    elif self.state == "store_url_entry" and self._store_url_input:
+                        self._store_url_input = self._store_url_input[:-1]
+                    elif self.state == "settings_wallet_unlock" and self._wallet_pin_input:
+                        self._wallet_pin_input = self._wallet_pin_input[:-1]
+                else:
+                    if self.state == "dev_console":
+                        self._dev_console_cmd += ch
+                    elif self.state == "wifi_psk":
+                        self.wifi_psk_input += ch
+                    elif self.state == "store_url_entry":
+                        self._store_url_input += ch
+                    elif self.state == "settings_wallet_unlock":
+                        self._wallet_pin_input += ch
+
+    def _home_input(self, action: str, ev: dict = None):
+        n = len(SECTIONS)
+        if action in ("DPAD_RIGHT", "DPAD_DOWN"):
+            self._prev_section = self.section_idx
+            self.section_idx = (self.section_idx + 1) % n
+        elif action in ("DPAD_LEFT", "DPAD_UP"):
+            self._prev_section = self.section_idx
+            self.section_idx = (self.section_idx - 1) % n
+        elif action == "CLICK" and ev:
+            hit = self._home_hittest(ev["pos"])
+            if hit is not None:
+                self._prev_section = self.section_idx
+                self.section_idx = hit
+                self._home_select()
+            return
+        elif action == "A":
+            self._home_select()
+
+    def _home_select(self):
+        section = SECTIONS[self.section_idx]
+        if section == "Play":
+            self._refresh_games()
+            self.list_idx = 0
+            self.state = "play"
+        elif section == "Settings":
+            self.settings_idx = 0
+            self.state = "settings"
+        elif section == "Power":
+            self.power_idx = 0
+            self.state = "power"
+
+    def _home_hittest(self, pos):
+        """Return section index if pos is inside a section button, else None."""
+        rects = self._home_section_rects()
+        for i, r in enumerate(rects):
+            if r.collidepoint(pos):
+                return i
+        return None
+
+    def _home_section_rects(self):
+        pill_w = max(300, min(760, WIDTH - 150 if WIDTH < 1000 else WIDTH - 360))
+        status_h = 54 if HEIGHT >= 680 else 46
+        top = 220 if HEIGHT >= 680 else 182
+        bottom = HEIGHT - 44 - status_h - (22 if HEIGHT >= 680 else 16)
+        gap = 12 if HEIGHT >= 680 else 10
+        pill_h = max(52, min(68, (bottom - top - gap * (len(SECTIONS) - 1)) // len(SECTIONS)))
+        start_x = WIDTH // 2 - pill_w // 2
+        return [
+            pygame.Rect(start_x, top + i * (pill_h + gap), pill_w, pill_h)
+            for i in range(len(SECTIONS))
+        ]
+
+    def _play_input(self, action: str, ev: dict = None):
+        n = len(self.games)
+        if action == "B" or action == "START":
+            self.state = "home"
+        elif action == "DPAD_DOWN":
+            if n:
+                self.list_idx = (self.list_idx + 1) % n
+        elif action == "DPAD_UP":
+            if n:
+                self.list_idx = (self.list_idx - 1) % n
+        elif action == "Y":
+            self._enter_game_store()
+        elif action == "X":
+            self._enter_install_browse()
+        elif action == "CLICK" and ev:
+            pos = ev["pos"]
+            store_r, inst_r = self._play_footer_rects()
+            if store_r.collidepoint(pos):
+                self._enter_game_store()
+                return
+            if inst_r.collidepoint(pos):
+                self._enter_install_browse()
+                return
+            rects = self._play_game_rects()
+            for i, r in enumerate(rects):
+                if r.collidepoint(pos):
+                    if i == self.list_idx:
+                        self._launch_game(self.games[i])
+                    else:
+                        self.list_idx = i
+            return
+        elif action == "A":
+            if self.games:
+                self._launch_game(self.games[self.list_idx])
+            else:
+                self._enter_game_store()
+
+    def _play_game_rects(self):
+        card_h, margin, start_y = 80, 10, 120
+        return [
+            pygame.Rect(40, start_y + i * (card_h + margin), WIDTH - 80, card_h)
+            for i in range(len(self.games))
+            if start_y + i * (card_h + margin) + card_h <= HEIGHT - 60
+        ]
+
+    def _launch_game(self, game: dict):
+        gid = game["id"]
+        self._show_message(f"Launching {game['name']}…")
+        self._draw()
+        pygame.display.flip()
+        time.sleep(0.5)
+        pygame.quit()
+        _exec_okama_run(gid)
+
+    def _settings_input(self, action: str, ev: dict = None):
+        n = len(self._settings_options())
+        if action == "B" or action == "START":
+            self.state = "home"
+        elif action == "DPAD_DOWN":
+            self.settings_idx = (self.settings_idx + 1) % n
+        elif action == "DPAD_UP":
+            self.settings_idx = (self.settings_idx - 1) % n
+        elif action == "CLICK" and ev:
+            rects = self._settings_rects()
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    self.settings_idx = i
+                    self._settings_select()
+            return
+        elif action == "A":
+            self._settings_select()
+
+    def _settings_select(self):
+        options = self._settings_options()
+        if not options:
+            return
+        self.settings_idx = min(self.settings_idx, len(options) - 1)
+        opt = options[self.settings_idx]
+        if opt == "Controllers":
+            self._enter_settings_controllers()
+        elif opt == "Bluetooth":
+            self._enter_settings_bluetooth()
+        elif opt == "Audio":
+            self._enter_settings_audio()
+        elif opt == "Network":
+            self._enter_settings_network()
+        elif opt == "Storage Info":
+            self._enter_settings_storage()
+        elif opt == "Updates":
+            self._enter_settings_updates()
+        elif opt == "Install / Persistence":
+            self._enter_settings_install()
+        elif opt == "Wallet":
+            self._enter_settings_wallet()
+        elif opt == "Support":
+            self.state = "settings_support"
+
+    def _settings_rects(self):
+        n = len(self._settings_options())
+        top = 86 if HEIGHT < 680 else 108
+        bottom = HEIGHT - 58
+        gap = 10 if HEIGHT < 680 else 12
+        card_h = max(38, min(56, (bottom - top - gap * (n - 1)) // max(n, 1)))
+        return [
+            pygame.Rect(40, top + i * (card_h + gap), WIDTH - 80, card_h)
+            for i in range(n)
+        ]
+
+    # -----------------------------------------------------------------------
+    # Shared sub-screen helpers
+    # -----------------------------------------------------------------------
+    def _subscreen_rects(self, n: int) -> list:
+        top = 112 if HEIGHT >= 680 else 92
+        bottom = HEIGHT - 60
+        gap = 8 if HEIGHT < 680 else 10
+        card_h = max(38, min(56, (bottom - top - gap * (max(n, 1) - 1)) // max(n, 1)))
+        return [
+            pygame.Rect(40, top + i * (card_h + gap), WIDTH - 80, card_h)
+            for i in range(n)
+            if top + i * (card_h + gap) + card_h <= bottom
+        ]
+
+    def _draw_subscreen_list(self, items: list, sel_idx: int, key_fn) -> None:
+        mx, my = self._mouse_pos
+        rects = self._subscreen_rects(len(items))
+        for i, (item, r) in enumerate(zip(items, rects)):
+            is_sel = (i == sel_idx)
+            is_hov = r.collidepoint(mx, my)
+            color = _lerp_color(COL_CARD, COL_SELECTED, 0.7) if is_sel \
+                    else (COL_CARD_HOV if is_hov else COL_CARD)
+            pygame.draw.rect(self.screen, color, r, border_radius=10)
+            if is_sel:
+                pygame.draw.rect(self.screen, COL_SETTINGS, r, 2, border_radius=10)
+                sel_bar = pygame.Rect(r.x, r.y, 4, r.h)
+                pygame.draw.rect(self.screen, COL_SETTINGS, sel_bar,
+                                 border_radius=2)
+            label = self.font_mdb.render(key_fn(item), True,
+                                         COL_TEXT if is_sel else COL_TEXT2)
+            self.screen.blit(label, (60, r.y + (r.h - label.get_height()) // 2))
+            if is_sel:
+                arrow = self.font_md.render(">", True, COL_SETTINGS)
+                self.screen.blit(arrow,
+                                 (WIDTH - 60,
+                                  r.y + (r.h - arrow.get_height()) // 2))
+
+    # -----------------------------------------------------------------------
+    # Settings > Controllers
+    # -----------------------------------------------------------------------
+    def _enter_settings_controllers(self):
+        self.ctrl_idx = 0
+        self.controllers_info = self._collect_controllers()
+        self.state = "settings_controllers"
+
+    def _collect_controllers(self) -> list:
+        items = []
+        for path in sorted(glob.glob("/dev/input/js*")):
+            name = os.path.basename(path)
+            try:
+                with open(f"/sys/class/input/{os.path.basename(path)}/device/name") as f:
+                    name = f.read().strip()
+            except Exception:
+                pass
+            items.append({"type": "usb", "label": f"USB:  {name}"})
+        for p in bt_mod.list_trusted():
+            label = p.get("name") or p.get("mac", "?")
+            items.append({"type": "bt",
+                          "label": f"BT:   {label}",
+                          "mac": p.get("mac", "")})
+        items.append({"type": "action",
+                      "label": "[ Pair New Bluetooth Controller ]"})
+        return items
+
+    def _settings_controllers_input(self, action: str, ev: dict = None):
+        n = len(self.controllers_info)
+        if action in ("B", "START"):
+            self.state = "settings"
+        elif action == "DPAD_UP":
+            self.ctrl_idx = (self.ctrl_idx - 1) % n
+        elif action == "DPAD_DOWN":
+            self.ctrl_idx = (self.ctrl_idx + 1) % n
+        elif action == "CLICK" and ev:
+            rects = self._subscreen_rects(n)
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    self.ctrl_idx = i
+                    self._controllers_select()
+            return
+        elif action == "A":
+            self._controllers_select()
+
+    def _controllers_select(self):
+        item = self.controllers_info[self.ctrl_idx]
+        if item["type"] == "action":
+            self._enter_settings_bluetooth()
+        elif item["type"] == "bt":
+            self._show_message(f"BT controller paired & trusted: {item['label']}")
+        else:
+            self._show_message(f"Connected: {item['label']}")
+
+    def _draw_settings_controllers(self):
+        self._draw_section_header("* Controllers", COL_SETTINGS)
+        self._draw_subscreen_list(self.controllers_info,
+                                  self.ctrl_idx,
+                                  key_fn=lambda x: x["label"])
+        if not any(x["type"] != "action" for x in self.controllers_info):
+            info = self.font_sm.render(
+                "No controllers detected. Connect via USB or pair via Bluetooth.",
+                True, COL_DIM)
+            self.screen.blit(info, (60, HEIGHT - 90))
+
+    # -----------------------------------------------------------------------
+    # Settings > Bluetooth
+    # -----------------------------------------------------------------------
+    def _enter_settings_bluetooth(self):
+        self.bt_dev_idx = 0
+        self.bt_scanning = False
+        self.bt_devices = []
+        self._bt_action_items = []
+        self._bt_refresh_items()
+        self.state = "settings_bluetooth"
+
+    def _bt_refresh_items(self):
+        s = bt_mod.status()
+        self._bt_powered = (s["powered"] == "yes")
+        items = []
+        if self._bt_powered:
+            items.append({"type": "toggle", "label": "Bluetooth: ON   [ Turn Off ]"})
+            connected = bt_mod.connected_macs()
+            trusted = bt_mod.trusted_macs()
+            known = {}
+            for d in bt_mod.paired_devices():
+                known[d["mac"]] = d
+            for p in bt_mod.list_trusted():
+                mac = p.get("mac", "")
+                if mac:
+                    known.setdefault(mac, {"mac": mac, "name": p.get("name", "Controller")})
+            for d in sorted(known.values(), key=lambda x: x.get("name", "")):
+                mac = d.get("mac", "")
+                name = d.get("name", mac)
+                state = "Connected" if mac in connected else ("Trusted" if mac in trusted else "Paired")
+                items.append({"type": "known_device",
+                              "label": f"  {name}  ({state})",
+                              "mac": mac, "name": name,
+                              "connected": mac in connected})
+            if self.bt_scanning:
+                items.append({"type": "info",
+                               "label": "  Scanning for devices…"})
+            else:
+                items.append({"type": "scan",
+                               "label": "[ Scan for Devices ]"})
+            for d in self.bt_devices:
+                if d["mac"] in known:
+                    continue
+                items.append({"type": "device",
+                               "label": f"  {d['name']}  ({d['mac']})",
+                               "mac": d["mac"], "name": d["name"],
+                               "connected": False})
+        else:
+            items.append({"type": "toggle",
+                           "label": "Bluetooth: OFF  [ Turn On ]"})
+        self._bt_action_items = items
+        self.bt_dev_idx = min(self.bt_dev_idx, max(len(items) - 1, 0))
+
+    def _settings_bluetooth_input(self, action: str, ev: dict = None):
+        n = max(len(self._bt_action_items), 1)
+        if action in ("B", "START"):
+            self.state = "settings"
+        elif action == "DPAD_UP":
+            self.bt_dev_idx = (self.bt_dev_idx - 1) % n
+        elif action == "DPAD_DOWN":
+            self.bt_dev_idx = (self.bt_dev_idx + 1) % n
+        elif action == "CLICK" and ev:
+            rects = self._subscreen_rects(n)
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    self.bt_dev_idx = i
+                    self._bt_select()
+            return
+        elif action == "A":
+            self._bt_select()
+        elif action == "X":
+            self._bt_forget_selected()
+
+    def _bt_select(self):
+        if not self._bt_action_items:
+            return
+        item = self._bt_action_items[self.bt_dev_idx]
+        if item["type"] == "toggle":
+            cmd = "on" if not self._bt_powered else "off"
+            if cmd == "on":
+                subprocess.call(["/etc/init.d/S25okama-bluetooth", "start"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.call(["bluetoothctl", "power", cmd],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.conf.set("BLUETOOTH_ENABLED", "yes" if cmd == "on" else "no")
+            self._bt_refresh_items()
+        elif item["type"] == "scan":
+            self._start_bt_scan()
+        elif item["type"] in ("device", "known_device"):
+            mac, name = item["mac"], item["name"]
+            if item.get("connected"):
+                self._show_message(f"Disconnecting {name}...")
+                threading.Thread(target=self._do_bt_disconnect,
+                                 args=(mac, name), daemon=True).start()
+            else:
+                self._show_message(f"Connecting {name}...")
+                threading.Thread(target=self._do_bt_pair,
+                                 args=(mac, name), daemon=True).start()
+
+    def _bt_forget_selected(self):
+        if not self._bt_action_items:
+            return
+        item = self._bt_action_items[self.bt_dev_idx]
+        if item.get("type") not in ("device", "known_device"):
+            return
+        mac, name = item["mac"], item["name"]
+        ok = bt_mod.forget(mac)
+        self._show_message(f"Forgotten: {name}" if ok else f"Forget failed: {name}")
+        self._bt_refresh_items()
+
+    def _start_bt_scan(self):
+        self.bt_scanning = True
+        self.bt_devices = []
+        self._bt_refresh_items()
+        threading.Thread(target=self._do_bt_scan, daemon=True).start()
+
+    def _do_bt_scan(self):
+        self.bt_devices = bt_mod.scan(timeout=10)
+        self.bt_scanning = False
+        self._bt_refresh_items()
+
+    def _do_bt_pair(self, mac: str, name: str):
+        ok = bt_mod.pair(mac)
+        if ok:
+            bt_mod.trust(mac)
+            bt_mod.connect(mac)
+            bt_mod.save_controller_profile(mac, name)
+            self._show_message(f"Paired & connected: {name}")
+        else:
+            self._show_message(f"Pairing failed for {name}")
+        self._bt_refresh_items()
+
+    def _do_bt_disconnect(self, mac: str, name: str):
+        ok = bt_mod.disconnect(mac)
+        self._show_message(f"Disconnected: {name}" if ok else f"Disconnect failed: {name}")
+        self._bt_refresh_items()
+
+    def _draw_settings_bluetooth(self):
+        self._draw_section_header("* Bluetooth", COL_SETTINGS)
+        self._draw_subscreen_list(self._bt_action_items,
+                                  self.bt_dev_idx,
+                                  key_fn=lambda x: x["label"])
+        if self._bt_action_items:
+            item = self._bt_action_items[self.bt_dev_idx]
+            if item.get("type") in ("device", "known_device"):
+                hint = self.font_sm.render("[A] Connect/Disconnect   [X] Forget", True, COL_DIM)
+                self.screen.blit(hint, (60, HEIGHT - 90))
+
+    # -----------------------------------------------------------------------
+    # Settings > Audio
+    # -----------------------------------------------------------------------
+    def _enter_settings_audio(self):
+        try:
+            self.audio_volume = int(self.conf.get("DEFAULT_VOLUME", "80"))
+        except (ValueError, TypeError):
+            self.audio_volume = 80
+        self.state = "settings_audio"
+
+    def _settings_audio_input(self, action: str, ev: dict = None):
+        if action in ("B", "START"):
+            self.state = "settings"
+        elif action in ("DPAD_RIGHT", "DPAD_UP"):
+            self.audio_volume = min(100, self.audio_volume + 5)
+            self._apply_volume()
+        elif action in ("DPAD_LEFT", "DPAD_DOWN"):
+            self.audio_volume = max(0, self.audio_volume - 5)
+            self._apply_volume()
+        elif action == "A":
+            self._apply_volume()
+            self._show_message(f"Volume saved: {self.audio_volume}%")
+
+    def _apply_volume(self):
+        self.conf.set("DEFAULT_VOLUME", str(self.audio_volume))
+        try:
+            subprocess.call(
+                ["amixer", "sset", "Master", f"{self.audio_volume}%"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+    def _draw_settings_audio(self):
+        self._draw_section_header("* Audio", COL_SETTINGS)
+        vol = self.audio_volume
+        bar_x, bar_y = 80, 220
+        bar_w, bar_h = WIDTH - 160, 44
+
+        lbl = self.font_mdb.render(f"Volume:  {vol}%", True, COL_TEXT)
+        self.screen.blit(lbl, (bar_x, 155))
+
+        pygame.draw.rect(self.screen, COL_CARD,
+                         (bar_x, bar_y, bar_w, bar_h), border_radius=10)
+        fill_w = int(bar_w * vol / 100)
+        if fill_w > 0:
+            fill_col = _lerp_color(COL_OK, COL_WARN, vol / 100)
+            pygame.draw.rect(self.screen, fill_col,
+                             (bar_x, bar_y, fill_w, bar_h), border_radius=10)
+        pygame.draw.rect(self.screen, COL_SETTINGS,
+                         (bar_x, bar_y, bar_w, bar_h), 2, border_radius=10)
+
+        backend = self.conf.get("AUDIO_BACKEND", "alsa")
+        hints = [
+            f"Backend: {backend.upper()}",
+            "[Left / Right] or [D-pad] to adjust   [Enter / A] to save",
+        ]
+        for j, line in enumerate(hints):
+            surf = self.font_sm.render(line, True, COL_DIM)
+            self.screen.blit(surf, (bar_x, bar_y + bar_h + 18 + j * 28))
+
+    # -----------------------------------------------------------------------
+    # Settings > Network
+    # -----------------------------------------------------------------------
+    def _enter_settings_network(self):
+        self.net_info = self._collect_net_info()
+        self.net_idx = 0
+        self.state = "settings_network"
+
+    def _collect_net_info(self) -> list:
+        import re as _re
+        interfaces = []
+
+        def _read(path: str) -> str:
+            try:
+                with open(path) as f:
+                    return f.read().strip()
+            except OSError:
+                return ""
+
+        def _is_wireless(iface: str) -> bool:
+            return (
+                os.path.isdir(f"/sys/class/net/{iface}/wireless")
+                or iface.startswith(("wl", "wlan"))
+            )
+
+        def _add_iface(item: dict) -> None:
+            iface = (item.get("iface") or "").split("@", 1)[0].rstrip(":")
+            if not iface or iface == "lo" or iface in {x.get("iface") for x in interfaces}:
+                return
+            item["iface"] = iface
+            item["type"] = "wireless" if _is_wireless(iface) else "wired"
+            item["carrier"] = _read(f"/sys/class/net/{iface}/carrier") == "1"
+            if not item.get("mac"):
+                item["mac"] = _read(f"/sys/class/net/{iface}/address")
+            interfaces.append(item)
+
+        try:
+            result = subprocess.run(["ip", "-j", "addr", "show"],
+                                    capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                for dev in json.loads(result.stdout):
+                    ips = []
+                    for addr in dev.get("addr_info", []):
+                        local = addr.get("local", "")
+                        if not local or local.startswith("127.") or local == "::1":
+                            continue
+                        scope = addr.get("scope", "")
+                        if scope == "host":
+                            continue
+                        prefix = addr.get("prefixlen")
+                        ips.append(f"{local}/{prefix}" if prefix is not None else local)
+                    flags = set(dev.get("flags", []))
+                    _add_iface({
+                        "iface": dev.get("ifname", ""),
+                        "admin_state": (dev.get("operstate") or "UNKNOWN").upper(),
+                        "admin_up": "UP" in flags,
+                        "mac": dev.get("address", ""),
+                        "ips": ips,
+                    })
+        except Exception:
+            pass
+
+        if not interfaces:
+            try:
+                result = subprocess.run(["ip", "addr"],
+                                        capture_output=True, text=True, timeout=5)
+                iface = None
+                current = None
+                for line in result.stdout.splitlines():
+                    m = _re.match(r"^\d+:\s+([^:@]+)(?:@[^:]+)?:\s+<([^>]*)>.*state\s+(\S+)", line)
+                    if m:
+                        if current:
+                            _add_iface(current)
+                        iface = m.group(1)
+                        flags = set(m.group(2).split(","))
+                        current = {
+                            "iface": iface,
+                            "admin_state": m.group(3).upper(),
+                            "admin_up": "UP" in flags,
+                            "ips": [],
+                        }
+                        continue
+                    m2 = _re.match(r"^\s+inet6?\s+(\S+)", line)
+                    if m2 and current:
+                        ip = m2.group(1)
+                        if not ip.startswith("127.") and ip != "::1/128":
+                            current.setdefault("ips", []).append(ip)
+                if current:
+                    _add_iface(current)
+            except Exception as e:
+                return [{"type": "action", "label": "[ Refresh Network Devices ]"},
+                        {"iface": "error", "state": "down", "type": "info",
+                         "label": f"Error: {e}"}]
+
+        if not interfaces:
+            for iface_path in sorted(glob.glob("/sys/class/net/*")):
+                iface = os.path.basename(iface_path)
+                if iface == "lo":
+                    continue
+                oper = _read(os.path.join(iface_path, "operstate")).upper() or "UNKNOWN"
+                flags = _read(os.path.join(iface_path, "flags"))
+                try:
+                    flags_int = int(flags, 16)
+                except ValueError:
+                    flags_int = 0
+                _add_iface({
+                    "iface": iface,
+                    "admin_state": oper,
+                    "admin_up": bool(flags_int & 0x1) or oper == "UP",
+                    "ips": [],
+                })
+
+        default_iface = self._default_route_iface()
+        connectivity = self._check_connectivity()
+
+        items = [{"type": "action", "label": "[ Refresh Network Devices ]"}]
+        for item in interfaces:
+            iface = item["iface"]
+            ips = item.get("ips", [])
+            if ips:
+                item["ip"] = ips[0]
+            has_ip = bool(ips)
+            admin_up = bool(item.get("admin_up")) or item.get("admin_state") == "UP"
+            active_route = default_iface == iface
+            if has_ip and active_route and connectivity == "Online":
+                item["state"] = "up"
+                item["status"] = "Online"
+            elif has_ip and active_route:
+                item["state"] = "up"
+                item["status"] = "Local"
+            elif has_ip:
+                item["state"] = "up"
+                item["status"] = "Connected"
+            elif admin_up:
+                item["state"] = "up"
+                item["status"] = "Ready / No IP"
+            else:
+                item["state"] = "down"
+                item["status"] = "Down"
+            if item.get("type") == "wireless":
+                item["ssid"] = self._wifi_current_ssid(iface)
+                if item.get("ssid") and item["status"] in ("Ready / No IP", "Connected"):
+                    item["status"] = "WiFi Linked" if not has_ip else item["status"]
+            items.append(item)
+
+        if len(items) == 1:
+            items.append({"iface": "none", "state": "down", "type": "info",
+                          "label": "No network interfaces found"})
+        return items
+
+    def _default_route_iface(self) -> str:
+        try:
+            result = subprocess.run(["ip", "route", "show", "default"],
+                                    capture_output=True, text=True, timeout=2)
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if "dev" in parts:
+                    return parts[parts.index("dev") + 1]
+        except Exception:
+            pass
+        return ""
+
+    def _wifi_current_ssid(self, iface: str) -> str:
+        try:
+            result = subprocess.run(["iw", "dev", iface, "link"],
+                                    capture_output=True, text=True, timeout=3)
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("SSID:"):
+                    return line.split("SSID:", 1)[1].strip()
+        except Exception:
+            pass
+        return ""
+
+    def _check_connectivity(self) -> str:
+        """Check if we have actual internet connectivity. Returns status string."""
+        # Try to ping a reliable host (Google DNS)
+        try:
+            result = subprocess.run(
+                ["ping", "-c", "1", "-W", "2", "8.8.8.8"],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                return "Online"
+        except Exception:
+            pass
+
+        # Fallback: try to reach a common website via curl/wget
+        try:
+            result = subprocess.run(
+                ["wget", "-q", "--timeout=3", "--tries=1", "-O", "-", "https://1.1.1.1"],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0:
+                return "Online"
+        except Exception:
+            pass
+
+        # Check if we have a default route
+        try:
+            result = subprocess.run(["ip", "route"], capture_output=True, text=True, timeout=2)
+            if "default" in result.stdout:
+                return "Local"
+        except Exception:
+            pass
+
+        return "Limited"
+
+    def _settings_network_input(self, action: str, ev: dict = None):
+        n = max(len(self.net_info), 1)
+        if action in ("B", "START"):
+            self.state = "settings"
+            return
+        elif action == "Y":
+            self.net_info = self._collect_net_info()
+            self.net_idx = min(self.net_idx, max(len(self.net_info) - 1, 0))
+        elif action == "DPAD_UP":
+            self.net_idx = (self.net_idx - 1) % n
+        elif action == "DPAD_DOWN":
+            self.net_idx = (self.net_idx + 1) % n
+        elif action == "CLICK" and ev:
+            rects = self._subscreen_rects(n)
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    self.net_idx = i
+                    self._net_select()
+            return
+        elif action == "A":
+            self._net_select()
+        elif action == "X":
+            self._net_disconnect_selected()
+
+    def _net_select(self):
+        if not self.net_info:
+            return
+        item = self.net_info[self.net_idx]
+        if item.get("type") == "action":
+            self.net_info = self._collect_net_info()
+            self.net_idx = min(self.net_idx, max(len(self.net_info) - 1, 0))
+        elif item.get("type") == "wired":
+            self._renew_dhcp(item["iface"])
+        elif item.get("type") == "wireless":
+            self._scan_wifi(item["iface"])
+
+    def _net_disconnect_selected(self):
+        if not self.net_info:
+            return
+        item = self.net_info[self.net_idx]
+        if item.get("type") not in ("wired", "wireless"):
+            return
+        self._show_message(f"Disconnecting {item['iface']}...")
+        threading.Thread(target=self._do_net_disconnect,
+                         args=(item["iface"], item.get("type")),
+                         daemon=True).start()
+
+    def _do_net_disconnect(self, iface: str, typ: str):
+        try:
+            if typ == "wireless" and shutil.which("wpa_cli"):
+                subprocess.run(["wpa_cli", "-i", iface, "disconnect"],
+                               capture_output=True, timeout=5)
+            subprocess.run(["dhcpcd", "-k", iface], capture_output=True, timeout=5)
+            subprocess.run(["ip", "addr", "flush", "dev", iface],
+                           capture_output=True, timeout=5)
+            subprocess.run(["ip", "link", "set", iface, "down"],
+                           capture_output=True, timeout=5)
+        except Exception:
+            pass
+        self.net_info = self._collect_net_info()
+
+    def _renew_dhcp(self, iface: str):
+        self._show_message(f"Renewing DHCP on {iface}...")
+        threading.Thread(target=self._do_dhcp, args=(iface,), daemon=True).start()
+
+    def _dhcp_request(self, iface: str) -> bool:
+        ok = False
+        if shutil.which("udhcpc"):
+            try:
+                res = subprocess.run(["udhcpc", "-b", "-i", iface],
+                                     capture_output=True, timeout=10)
+                ok = res.returncode == 0
+            except Exception:
+                pass
+        try:
+            res = subprocess.run(["dhcpcd", "-n", iface],
+                                 capture_output=True, timeout=10)
+            if res.returncode != 0:
+                res = subprocess.run(["dhcpcd", "-b", iface],
+                                     capture_output=True, timeout=10)
+            ok = ok or res.returncode == 0
+        except Exception:
+            pass
+        return ok
+
+    def _do_dhcp(self, iface: str):
+        try:
+            self.conf.set("NETWORK_ENABLED", "yes")
+            subprocess.run(["ip", "link", "set", iface, "up"], check=False)
+            self._dhcp_request(iface)
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception:
+            pass
+        self.net_info = self._collect_net_info()
+
+    def _scan_wifi(self, iface: str):
+        self.wifi_scan_iface = iface
+        self.wifi_scanning = True
+        self.wifi_networks = []
+        self.wifi_scan_idx = 0
+        self.wifi_connect_status = ""
+        self.conf.set("NETWORK_ENABLED", "yes")
+        self.conf.set("WIFI_ENABLED", "yes")
+        threading.Thread(target=self._do_wifi_scan, args=(iface,), daemon=True).start()
+        self.state = "wifi_networks"
+
+    def _do_wifi_scan(self, iface: str):
+        try:
+            subprocess.run(["ip", "link", "set", iface, "up"], capture_output=True, timeout=5)
+            proc = subprocess.Popen(
+                ["iw", "dev", iface, "scan", "ap-force"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            stdout, _ = proc.communicate(timeout=15)
+            networks = []
+            cur = {}
+            for line in stdout.splitlines():
+                line = line.strip()
+                if line.startswith("BSS "):
+                    if cur.get("ssid"):
+                        networks.append(cur)
+                    cur = {"mac": line.split()[1].rstrip("(")}
+                elif "SSID:" in line:
+                    cur["ssid"] = line.split("SSID:", 1)[1].strip()
+                elif "signal:" in line.lower():
+                    parts = line.split()
+                    for i, p in enumerate(parts):
+                        if p == "signal:":
+                            try:
+                                sig = int(float(parts[i+1]))
+                                cur["signal"] = sig
+                            except (IndexError, ValueError):
+                                pass
+                elif line.startswith("capability:") and "Privacy" in line:
+                    cur["secure"] = True
+                elif line.startswith("RSN:") or line.startswith("WPA:"):
+                    cur["secure"] = True
+            if cur.get("ssid"):
+                networks.append(cur)
+            if not networks and shutil.which("iwlist"):
+                proc = subprocess.Popen(
+                    ["iwlist", iface, "scan"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                stdout, _ = proc.communicate(timeout=15)
+                cur = {}
+                for line in stdout.splitlines():
+                    line = line.strip()
+                    if "Cell " in line and "Address:" in line:
+                        if cur.get("ssid"):
+                            networks.append(cur)
+                        cur = {"mac": line.split("Address:", 1)[1].strip()}
+                    elif line.startswith("ESSID:"):
+                        cur["ssid"] = line.split("ESSID:", 1)[1].strip().strip('"')
+                    elif "Signal level=" in line:
+                        try:
+                            level = line.split("Signal level=", 1)[1].split()[0]
+                            cur["signal"] = int(float(level.replace("/100", "")))
+                        except ValueError:
+                            pass
+                    elif line.startswith("Encryption key:"):
+                        cur["secure"] = line.endswith("on")
+                if cur.get("ssid"):
+                    networks.append(cur)
+            uniq = {}
+            for n in sorted(networks, key=lambda x: x.get("signal", -100), reverse=True):
+                ssid = n.get("ssid", "")
+                if ssid and ssid not in uniq:
+                    uniq[ssid] = n
+            self.wifi_networks = list(uniq.values())[:20]
+            self.wifi_connect_status = f"Found {len(self.wifi_networks)} networks"
+        except subprocess.TimeoutExpired:
+            self.wifi_connect_status = "Scan timeout (device busy)"
+        except Exception as e:
+            self.wifi_connect_status = f"Scan error: {str(e)[:40]}"
+        finally:
+            self.wifi_scanning = False
+
+    def _wifi_networks_input(self, action: str, ev: dict = None):
+        n = len(self.wifi_networks)
+        if action in ("B", "START"):
+            self.state = "settings_network"
+            return
+        if n == 0:
+            return
+        if action == "DPAD_UP":
+            self.wifi_scan_idx = (self.wifi_scan_idx - 1) % n
+        elif action == "DPAD_DOWN":
+            self.wifi_scan_idx = (self.wifi_scan_idx + 1) % n
+        elif action == "A":
+            net = self.wifi_networks[self.wifi_scan_idx]
+            self.wifi_psk_ssid = net.get("ssid", "")
+            self.wifi_psk_iface = self.wifi_scan_iface
+            self.wifi_psk_input = ""
+            self.wifi_connect_status = ""
+            self.state = "wifi_psk"
+        elif action == "CLICK" and ev:
+            rects = self._subscreen_rects(n)
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    if i == self.wifi_scan_idx:
+                        net = self.wifi_networks[i]
+                        self.wifi_psk_ssid = net.get("ssid", "")
+                        self.wifi_psk_iface = self.wifi_scan_iface
+                        self.wifi_psk_input = ""
+                        self.wifi_connect_status = ""
+                        self.state = "wifi_psk"
+                    else:
+                        self.wifi_scan_idx = i
+
+    def _wifi_psk_input(self, action: str, ev: dict = None):
+        if action in ("B", "START"):
+            self.state = "wifi_networks"
+            return
+        if action == "A" or action == "ENTER":
+            ssid = self.wifi_psk_ssid
+            psk = self.wifi_psk_input
+            iface = self.wifi_psk_iface
+            threading.Thread(target=self._connect_wifi, args=(iface, ssid, psk), daemon=True).start()
+
+    def _connect_wifi(self, iface: str, ssid: str, psk: str):
+        self.wifi_connect_status = f"Connecting to {ssid}..."
+        try:
+            def _wpa_quote(value: str) -> str:
+                return value.replace("\\", "\\\\").replace('"', '\\"')
+
+            conf_dir = "/etc/wpa_supplicant"
+            os.makedirs(conf_dir, exist_ok=True)
+            conf_path = os.path.join(conf_dir, f"{iface}.conf")
+            with open(conf_path, "w") as f:
+                f.write("ctrl_interface=/var/run/wpa_supplicant\n")
+                f.write("update_config=1\n\n")
+                if psk:
+                    f.write(
+                        f'network={{\n  ssid="{_wpa_quote(ssid)}"\n'
+                        f'  psk="{_wpa_quote(psk)}"\n}}\n')
+                else:
+                    f.write(
+                        f'network={{\n  ssid="{_wpa_quote(ssid)}"\n'
+                        "  key_mgmt=NONE\n}\n")
+            try:
+                shutil.copyfile(conf_path, "/etc/wpa_supplicant.conf")
+            except OSError:
+                pass
+            subprocess.run(["killall", "wpa_supplicant"], capture_output=True)
+            time.sleep(0.5)
+            subprocess.run(
+                ["wpa_supplicant", "-B", "-i", iface, "-c", conf_path],
+                capture_output=True
+            )
+            time.sleep(2)
+            if self._dhcp_request(iface):
+                self.wifi_connect_status = f"Connected to {ssid}"
+                self.conf.set("WIFI_ENABLED", "yes")
+                self.net_info = self._collect_net_info()
+                time.sleep(0.5)
+                self.state = "settings_network"
+            else:
+                self.wifi_connect_status = "DHCP failed; check password"
+        except subprocess.TimeoutExpired:
+            self.wifi_connect_status = "Connection timeout"
+        except Exception as e:
+            self.wifi_connect_status = f"Error: {str(e)[:40]}"
+
+    def _draw_settings_network(self):
+        self._draw_section_header("* Network", COL_SETTINGS)
+        mx, my = self._mouse_pos
+        items = self.net_info
+        rects = self._subscreen_rects(len(items))
+        for i, (item, r) in enumerate(zip(items, rects)):
+            is_sel = (i == self.net_idx)
+            is_hov = r.collidepoint(mx, my)
+            color = _lerp_color(COL_CARD, COL_SELECTED, 0.7) if is_sel else (COL_CARD_HOV if is_hov else COL_CARD)
+            pygame.draw.rect(self.screen, color, r, border_radius=10)
+            if is_sel:
+                pygame.draw.rect(self.screen, COL_SETTINGS, r, 2, border_radius=10)
+                pygame.draw.rect(self.screen, COL_SETTINGS, pygame.Rect(r.x, r.y, 4, r.h), border_radius=2)
+            typ = item.get("type", "")
+            if typ == "action":
+                lbl = self.font_mdb.render(item.get("label", "[ Refresh ]"), True,
+                                           COL_TEXT if is_sel else COL_TEXT2)
+                self.screen.blit(lbl, (60, r.y + (r.h - lbl.get_height()) // 2))
+                continue
+            if typ == "info":
+                lbl = self.font_mdb.render(item.get("label", "No devices"), True, COL_DIM)
+                self.screen.blit(lbl, (60, r.y + (r.h - lbl.get_height()) // 2))
+                continue
+            iface = item.get("iface", "?")
+            status = item.get("status", "")
+            ip = item.get("ip", "") or "no address"
+            ssid = item.get("ssid", "")
+            kind = "WiFi" if typ == "wireless" else "Ethernet"
+            lbl_text = f"{iface}  {kind}  [{status}]"
+            lbl = self.font_mdb.render(lbl_text, True, COL_TEXT if is_sel else COL_TEXT2)
+            self.screen.blit(lbl, (60, r.y + 7))
+            sub_text = f"{ip}"
+            if ssid:
+                sub_text += f"  SSID: {ssid}"
+            elif item.get("mac"):
+                sub_text += f"  MAC: {item.get('mac')}"
+            sub = self.font_hint.render(sub_text[:100], True, COL_DIM)
+            self.screen.blit(sub, (60, r.y + 34))
+            if is_sel:
+                arrow = self.font_md.render(">", True, COL_SETTINGS)
+                self.screen.blit(arrow, (WIDTH - 60, r.y + (r.h - arrow.get_height()) // 2))
+            hint_y = r.y + r.h + 2
+            if is_sel and typ == "wired":
+                hint = self.font_sm.render("[A] Connect/Renew DHCP   [X] Disconnect   [Y] Refresh", True, COL_DIM)
+                self.screen.blit(hint, (60, hint_y))
+            elif is_sel and typ == "wireless":
+                hint = self.font_sm.render("[A] Scan/Connect WiFi   [X] Disconnect   [Y] Refresh", True, COL_DIM)
+                self.screen.blit(hint, (60, hint_y))
+        if not items:
+            info = self.font_sm.render("No network interfaces detected.", True, COL_DIM)
+            self.screen.blit(info, (60, HEIGHT // 2))
+
+    def _draw_wifi_networks(self):
+        self._draw_section_header("* WiFi Networks", COL_SETTINGS)
+        mx, my = self._mouse_pos
+        if self.wifi_scanning:
+            spin = ["/", "-", "\\", "|"][(self._tick // 8) % 4]
+            txt = self.font_md.render(f"Scanning {self.wifi_scan_iface}... {spin}", True, COL_ACCENT)
+            self.screen.blit(txt, (WIDTH // 2 - txt.get_width() // 2, 180))
+        n = len(self.wifi_networks)
+        if n == 0 and not self.wifi_scanning:
+            empty = self.font_md.render("No networks found", True, COL_DIM)
+            self.screen.blit(empty, (WIDTH // 2 - empty.get_width() // 2, 180))
+        else:
+            rects = self._subscreen_rects(n)
+            for i, (net, r) in enumerate(zip(self.wifi_networks, rects)):
+                is_sel = (i == self.wifi_scan_idx)
+                is_hov = r.collidepoint(mx, my)
+                color = _lerp_color(COL_CARD, COL_SELECTED, 0.7) if is_sel else (COL_CARD_HOV if is_hov else COL_CARD)
+                pygame.draw.rect(self.screen, color, r, border_radius=10)
+                if is_sel:
+                    pygame.draw.rect(self.screen, COL_SETTINGS, r, 2, border_radius=10)
+                    pygame.draw.rect(self.screen, COL_SETTINGS, pygame.Rect(r.x, r.y, 4, r.h), border_radius=2)
+                ssid = net.get("ssid", "?")
+                sig = net.get("signal", -100)
+                sig_dbm = f"{sig} dBm" if isinstance(sig, int) else "?"
+                secure = "WPA" if net.get("secure") else "Open"
+                lbl = self.font_mdb.render(f"{ssid}  ({sig_dbm})  {secure}", True, COL_TEXT if is_sel else COL_TEXT2)
+                self.screen.blit(lbl, (60, r.y + (r.h - lbl.get_height()) // 2))
+                if is_sel:
+                    arrow = self.font_sm.render("A > Enter Password", True, COL_SETTINGS)
+                    self.screen.blit(arrow, (WIDTH - arrow.get_width() - 16, r.y + (r.h - arrow.get_height()) // 2))
+        if self.wifi_connect_status:
+            st = self.font_sm.render(self.wifi_connect_status, True, COL_DIM)
+            self.screen.blit(st, (WIDTH // 2 - st.get_width() // 2, HEIGHT - 80))
+
+    def _draw_wifi_psk(self):
+        self._draw_section_header("* WiFi Password", COL_SETTINGS)
+        ssid = self.wifi_psk_ssid
+        hint = self.font_sm.render(f"Enter password for \"{ssid}\" (empty = open)", True, COL_DIM)
+        self.screen.blit(hint, (60, 120))
+        input_r = pygame.Rect(60, 160, WIDTH - 120, 50)
+        pygame.draw.rect(self.screen, COL_CARD, input_r, border_radius=10)
+        pygame.draw.rect(self.screen, COL_SETTINGS, input_r, 2, border_radius=10)
+        dots = "*" * len(self.wifi_psk_input)
+        if (self._tick // 30) % 2 == 0:
+            dots += "_"
+        txt = self.font_mdb.render(dots, True, COL_TEXT)
+        self.screen.blit(txt, (input_r.x + 12, input_r.y + (input_r.h - txt.get_height()) // 2))
+        if self.wifi_connect_status:
+            col = COL_OK if "connected" in self.wifi_connect_status.lower() else COL_DIM
+            st = self.font_sm.render(self.wifi_connect_status, True, col)
+            self.screen.blit(st, (60, 230))
+        hints = self.font_sm.render("[Enter] Connect    [Esc/B] Cancel", True, COL_DIM)
+        self.screen.blit(hints, (60, HEIGHT - 80))
+
+    # -----------------------------------------------------------------------
+    # Settings > Storage Info
+    # -----------------------------------------------------------------------
+    def _enter_settings_storage(self):
+        self.storage_idx = 0
+        self.storage_info = self._collect_storage_info()
+        self.state = "settings_storage"
+
+    def _path_size(self, path: str) -> int:
+        total = 0
+        try:
+            p = Path(path)
+            if p.is_file():
+                return p.stat().st_size
+            for item in p.rglob("*"):
+                try:
+                    if item.is_file():
+                        total += item.stat().st_size
+                except OSError:
+                    pass
+        except Exception:
+            pass
+        return total
+
+    def _largest_files(self, roots: list, limit: int = 8) -> list:
+        files = []
+        seen = set()
+        for root in roots:
+            if not root or root in seen or not os.path.isdir(root):
+                continue
+            seen.add(root)
+            try:
+                for path in Path(root).rglob("*"):
+                    try:
+                        if path.is_file():
+                            files.append((path.stat().st_size, str(path)))
+                    except OSError:
+                        pass
+            except Exception:
+                pass
+        return sorted(files, reverse=True)[:limit]
+
+    def _collect_storage_info(self) -> list:
+        lines = []
+        for mount in ("/", "/var/okamaos"):
+            try:
+                st = os.statvfs(mount)
+                total = st.f_blocks * st.f_frsize
+                free  = st.f_bavail * st.f_frsize
+                used  = total - free
+                lines.append({"label": f"{mount} total {_fmt_bytes(total)}  used {_fmt_bytes(used)}  free {_fmt_bytes(free)}"})
+            except Exception:
+                if mount == "/":
+                    lines.append({"label": "Disk info unavailable"})
+
+        paths = {
+            "Installed games": self.conf.get("GAMES_DIR", "/var/okamaos/games"),
+            "Saves": self.conf.get("SAVES_DIR", "/var/okamaos/saves"),
+            "Game downloads": self._game_downloads_dir(),
+            "Update downloads": self._downloads_dir(),
+            "Update backups": os.path.join(self.conf.get("UPDATES_DIR", "/var/okamaos/updates"), "backups"),
+            "Game backups": os.path.join(self.conf.get("UPDATES_DIR", "/var/okamaos/updates"), "game-backups"),
+            "Cache": self.conf.get("CACHE_DIR", "/var/okamaos/cache"),
+            "Logs": self.conf.get("LOGS_DIR", "/var/okamaos/logs"),
+            "Wallet": "/var/okamaos/wallet",
+            "Controllers": self.conf.get("CONTROLLERS_DIR", "/var/okamaos/controllers"),
+        }
+        ranked = sorted(
+            ((self._path_size(path), label, path) for label, path in paths.items()),
+            reverse=True,
+        )
+        lines.append({"label": "Storage by category"})
+        for rank, (size, label, path) in enumerate(ranked, start=1):
+            lines.append({"label": f"#{rank} {label}: {_fmt_bytes(size)}", "detail": path})
+
+        installed = games_mod.list_installed()
+        if installed:
+            lines.append({"label": f"Installed games ({len(installed)})"})
+        game_sizes = []
+        for g in installed:
+            gdir = games_mod.game_dir(g.get("id", ""))
+            game_sizes.append((self._path_size(gdir), g.get("name", g.get("id", "")), g))
+        for rank, (size, _name, g) in enumerate(sorted(game_sizes, reverse=True)[:10], start=1):
+            lines.append({
+                "label": f"#{rank} {g.get('name', g.get('id', '?'))}: {_fmt_bytes(size)}",
+                "detail": games_mod.game_dir(g.get("id", "")),
+            })
+
+        largest_roots = list(paths.values())
+        largest = self._largest_files(largest_roots)
+        if largest:
+            lines.append({"label": "Largest files"})
+        for rank, (size, path) in enumerate(largest, start=1):
+            lines.append({"label": f"#{rank} {_fmt_bytes(size)}  {path}"})
+        return lines
+
+    def _settings_storage_input(self, action: str, ev: dict = None):
+        if action in ("B", "START"):
+            self.state = "settings"
+        elif action in ("A", "Y"):
+            self.storage_info = self._collect_storage_info()
+            self.storage_idx = 0
+        elif action == "DPAD_DOWN" and self.storage_info:
+            self.storage_idx = min(self.storage_idx + 1, max(0, len(self.storage_info) - 1))
+        elif action == "DPAD_UP" and self.storage_info:
+            self.storage_idx = max(0, self.storage_idx - 1)
+
+    def _draw_settings_storage(self):
+        self._draw_section_header("* Storage Info", COL_SETTINGS)
+        max_rows = max(1, (HEIGHT - 150) // 42)
+        start = min(self.storage_idx, max(0, len(self.storage_info) - max_rows))
+        for i, item in enumerate(self.storage_info[start:start + max_rows]):
+            y = 92 + i * 42
+            label = item.get("label", "")
+            font = self.font_hint if len(label) > 78 else self.font_sm
+            lbl = font.render(label[:118], True, COL_TEXT2)
+            self.screen.blit(lbl, (60, y))
+            detail = item.get("detail")
+            if detail and y + 20 < HEIGHT - 70:
+                ds = self.font_hint.render(str(detail)[:118], True, COL_DIM)
+                self.screen.blit(ds, (78, y + 20))
+        hint = self.font_sm.render("[Y/A] Refresh   [Up/Down] Scroll   [Esc/B] Back", True, COL_DIM)
+        self.screen.blit(hint, (60, HEIGHT - 82))
+
+    # -----------------------------------------------------------------------
+    # Settings > Install / Persistence
+    # -----------------------------------------------------------------------
+    def _enter_settings_install(self):
+        self.install_system_idx = 0
+        self.install_system_status = ""
+        self.install_system_lines = self._collect_install_system_info()
+        self.state = "settings_install"
+
+    def _collect_install_system_info(self) -> list:
+        lines = []
+        installer = shutil.which("okama-install")
+        if not installer:
+            sibling = os.path.join(os.path.dirname(os.path.realpath(__file__)), "okama-install")
+            installer = sibling if os.path.exists(sibling) else "/usr/bin/okama-install"
+        if not os.path.exists(installer):
+            return ["okama-install is not packaged in this runtime."]
+        try:
+            status = subprocess.run(
+                [installer, "--persistence-status"],
+                capture_output=True, text=True, timeout=4)
+            for line in (status.stdout or status.stderr).splitlines():
+                if line.strip():
+                    lines.append(line.strip())
+        except Exception as e:
+            lines.append(f"Persistence status unavailable: {str(e)[:48]}")
+        try:
+            disks = subprocess.run(
+                [installer, "--list-disks"],
+                capture_output=True, text=True, timeout=4)
+            disk_lines = [line.rstrip() for line in disks.stdout.splitlines() if line.strip()]
+            if disk_lines:
+                lines.append("")
+                lines.extend(disk_lines[:8])
+        except Exception as e:
+            lines.append(f"Disk list unavailable: {str(e)[:48]}")
+        return lines or ["Installer ready."]
+
+    def _settings_install_input(self, action: str, ev: dict = None):
+        if action in ("B", "START"):
+            self.state = "settings"
+        elif action in ("A", "Y"):
+            self.install_system_lines = self._collect_install_system_info()
+            self.install_system_status = "Refreshed installer status."
+        elif action == "X":
+            self.install_system_status = (
+                "Use Dev Console: okama-install --target /dev/sdX --dry-run"
+            )
+
+    def _draw_settings_install(self):
+        self._draw_section_header("* Install", COL_SETTINGS)
+        x, y = 60, 96
+        intro = [
+            "Hard drive migration and live USB persistence are ready.",
+            "Use dry-run first; destructive actions require --yes or typed confirmation.",
+        ]
+        for line in intro:
+            surf = self.font_sm.render(line, True, COL_DIM)
+            self.screen.blit(surf, (x, y))
+            y += 26
+        panel = pygame.Rect(50, y + 10, WIDTH - 100, min(330, HEIGHT - y - 118))
+        pygame.draw.rect(self.screen, COL_CARD, panel, border_radius=8)
+        pygame.draw.rect(self.screen, COL_SETTINGS, panel, 1, border_radius=8)
+        line_y = panel.y + 14
+        for line in self.install_system_lines[:12]:
+            font = self.font_hint if len(line) > 80 else self.font_sm
+            surf = font.render(line[:118], True, COL_TEXT2 if line else COL_DIM)
+            self.screen.blit(surf, (panel.x + 14, line_y))
+            line_y += 24
+        if self.install_system_status:
+            st = self.font_sm.render(self.install_system_status, True, COL_OK)
+            self.screen.blit(st, (60, HEIGHT - 105))
+        hint = self.font_sm.render(
+            "[A/Y] Refresh   [X] Show command   [Esc/B] Back",
+            True, COL_DIM)
+        self.screen.blit(hint, (60, HEIGHT - 76))
+
+    # -----------------------------------------------------------------------
+    # Play > Install Browse
+    # -----------------------------------------------------------------------
+    def _enter_install_browse(self):
+        self.install_files = self._find_ok_files()
+        self.install_idx = 0
+        self.install_status = ""
+        self.state = "install_browse"
+
+    def _find_ok_files(self) -> list:
+        return self._find_files((".ok",))
+
+    def _install_browse_input(self, action: str, ev: dict = None):
+        n = len(self.install_files)
+        if action in ("B", "START"):
+            self.state = "play"
+            self._refresh_games()
+        elif action == "DPAD_UP" and n:
+            self.install_idx = (self.install_idx - 1) % n
+        elif action == "DPAD_DOWN" and n:
+            self.install_idx = (self.install_idx + 1) % n
+        elif action == "CLICK" and ev:
+            rects = self._subscreen_rects(max(n, 1))
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]) and i < n:
+                    if i == self.install_idx:
+                        self._do_install(self.install_files[i])
+                    else:
+                        self.install_idx = i
+            return
+        elif action == "A" and n:
+            self._do_install(self.install_files[self.install_idx])
+
+    def _do_install(self, path: str):
+        self.install_status = f"Installing {os.path.basename(path)}…"
+        self._draw()
+        pygame.display.flip()
+        try:
+            manifest = pkg_mod.verify(path, dev_mode=self.dev_mode)
+            manifest = games_mod.install_package(path, dev_mode=self.dev_mode)
+            self.install_status = (
+                f"Installed: {manifest['name']} v{manifest['version']}")
+            self._refresh_games()
+        except manifest_mod.ManifestError as e:
+            self.install_status = f"Bad package: {str(e)[:60]}"
+        except Exception as e:
+            self.install_status = f"Error: {str(e)[:60]}"
+
+    # -----------------------------------------------------------------------
+    # Game Store
+    # -----------------------------------------------------------------------
+    def _enter_game_store(self):
+        self.store_idx = 0
+        self.store_scroll = 0
+        if not self.store_catalog:
+            self.store_status = "Press Y to fetch catalog from zyntrixsolutions.github.io/okamaos"
+        self.state = "game_store"
+
+    def _fetch_store_catalog(self):
+        if self.store_loading or store_mod is None:
+            if store_mod is None:
+                self.store_status = "Store module unavailable."
+            return
+        import threading
+        self.store_loading = True
+        self.store_status = "Fetching catalog\u2026"
+
+        def _work():
+            try:
+                custom_url = self.conf.get("STORE_URL", "") or None
+                data = store_mod.fetch_catalog(url=custom_url)
+                self.store_catalog = data.get("games", [])
+                self.store_status = (
+                    f"{len(self.store_catalog)} game"
+                    f"{'s' if len(self.store_catalog) != 1 else ''} available"
+                )
+            except Exception as e:
+                self.store_status = f"Error: {str(e)[:60]}"
+            finally:
+                self.store_loading = False
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _store_download(self, entry: dict):
+        if self.store_loading or store_mod is None:
+            return
+        import threading
+        name = entry.get("name", entry.get("id", "game"))
+        self.store_loading = True
+        self._store_dl_progress = (0, entry.get("size_bytes", 0))
+        self.store_status = f"Downloading {name}\u2026"
+
+        def _work():
+            safe_name = _safe_download_name(
+                entry.get("download_url", ""),
+                f"{entry.get('id','game')}-{entry.get('version','latest')}.ok",
+            )
+            dest = os.path.join(self._game_downloads_dir(), safe_name)
+            try:
+                def _progress(recv, total):
+                    self._store_dl_progress = (recv, total)
+                    pct = int(recv * 100 / total) if total else 0
+                    self.store_status = f"Downloading {name}\u2026 {pct}%"
+
+                store_mod.download_game(entry, dest, progress_cb=_progress)
+                manifest = games_mod.install_package(dest, dev_mode=self.dev_mode)
+                self._refresh_games()
+                self.store_status = (
+                    f"Downloaded to game downloads and installed: "
+                    f"{name} v{manifest['version']}"
+                )
+            except Exception as e:
+                self.store_status = f"Failed: {str(e)[:60]}"
+            finally:
+                self.store_loading = False
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _game_store_input(self, action: str, ev: dict = None):
+        n = len(self.store_catalog)
+        if action in ("B", "START"):
+            self.state = "play"
+        elif action == "Y":
+            self._fetch_store_catalog()
+        elif action == "X" and self.dev_mode:
+            self._enter_store_url_entry()
+        elif action == "DPAD_UP" and n:
+            self.store_idx = (self.store_idx - 1) % n
+            visible = self._store_visible_count()
+            if self.store_idx < self.store_scroll:
+                self.store_scroll = self.store_idx
+            elif self.store_idx == n - 1:
+                self.store_scroll = max(0, n - visible)
+        elif action == "DPAD_DOWN" and n:
+            self.store_idx = (self.store_idx + 1) % n
+            visible = self._store_visible_count()
+            if self.store_idx >= self.store_scroll + visible:
+                self.store_scroll = self.store_idx - visible + 1
+            elif self.store_idx == 0:
+                self.store_scroll = 0
+        elif action == "A" and n:
+            self._store_download(self.store_catalog[self.store_idx])
+        elif action == "CLICK" and ev:
+            pos = ev["pos"]
+            refresh_r = self._store_refresh_rect()
+            if refresh_r.collidepoint(pos):
+                self._fetch_store_catalog()
+                return
+            if self.dev_mode:
+                url_r = self._store_seturl_rect()
+                if url_r.collidepoint(pos):
+                    self._enter_store_url_entry()
+                    return
+            rects = self._store_catalog_rects(n)
+            for j, r in enumerate(rects):
+                if r.collidepoint(pos):
+                    i = self.store_scroll + j
+                    if i < n:
+                        if i == self.store_idx:
+                            self._store_download(self.store_catalog[i])
+                        else:
+                            self.store_idx = i
+            return
+
+    def _store_refresh_rect(self):
+        btn_w, btn_h = 140, 36
+        return pygame.Rect(WIDTH - btn_w - 24, 63, btn_w, btn_h)
+
+    def _store_seturl_rect(self):
+        btn_w, btn_h = 130, 36
+        return pygame.Rect(WIDTH - 140 - 130 - 32, 63, btn_w, btn_h)
+
+    def _enter_store_url_entry(self):
+        self._store_url_input = self.conf.get("STORE_URL", "") or ""
+        self.state = "store_url_entry"
+
+    def _store_url_confirm(self):
+        url = self._store_url_input.strip()
+        if url:
+            self.conf.set("STORE_URL", url)
+            self.store_status = f"Store URL set. Press Y to refresh."
+        else:
+            self.conf.set("STORE_URL", "")
+            self.store_status = "Store URL cleared; using default."
+        self.state = "game_store"
+
+    def _draw_store_url_entry(self):
+        overlay = _alpha_surf(WIDTH - 80, 186, (0, 0, 0), 220)
+        box_y = HEIGHT // 2 - 93
+        self.screen.blit(overlay, (40, box_y))
+        pygame.draw.rect(self.screen, COL_STORE,
+                         pygame.Rect(40, box_y, WIDTH - 80, 186), 2, border_radius=10)
+        # Modal title (replaces duplicate section header)
+        title_s = self.font_sm.render("\u22c6 Set Store URL", True, COL_STORE)
+        self.screen.blit(title_s, (60, box_y + 14))
+        lbl = self.font_sm.render("Enter custom store URL (blank = default):", True, COL_DIM)
+        self.screen.blit(lbl, (60, box_y + 40))
+        hint2 = self.font_hint.render(
+            "e.g. http://192.168.1.100:3000/api/dev-store/catalog",
+            True, COL_DIM)
+        self.screen.blit(hint2, (60, box_y + 60))
+        inp_y = box_y + 88
+        inp_w = WIDTH - 130
+        pygame.draw.rect(self.screen, (20, 24, 18),
+                         pygame.Rect(56, inp_y, inp_w, 36), border_radius=6)
+        # URL validity indicator dot (right of input box)
+        raw = self._store_url_input.strip()
+        if raw:
+            dot_col = COL_OK if (raw.startswith("http://") or raw.startswith("https://")) \
+                      else (220, 160, 40)
+        else:
+            dot_col = COL_DIM
+        pygame.draw.circle(self.screen, dot_col,
+                           (56 + inp_w + 10, inp_y + 18), 5)
+        pygame.draw.rect(self.screen, COL_STORE,
+                         pygame.Rect(56, inp_y, inp_w, 36), 1, border_radius=6)
+        # Clip URL text to input box width (show tail when text overflows)
+        url_txt = self._store_url_input
+        if (self._tick // 30) % 2 == 0:
+            url_txt += "_"
+        url_surf = self.font_sm.render(url_txt, True, COL_TEXT)
+        max_w = inp_w - 16
+        if url_surf.get_width() > max_w:
+            clipped = pygame.Surface((max_w, url_surf.get_height()), pygame.SRCALPHA)
+            clipped.blit(url_surf, (max_w - url_surf.get_width(), 0))
+            self.screen.blit(clipped, (64, inp_y + 8))
+        else:
+            self.screen.blit(url_surf, (64, inp_y + 8))
+        ok_hint = self.font_hint.render(
+            "[Enter] Confirm   [B/Esc] Cancel", True, COL_DIM)
+        self.screen.blit(ok_hint, (60, box_y + 148))
+
+    def _store_visible_count(self) -> int:
+        """How many catalog cards fit in the viewport."""
+        card_h, gap = 68, 6
+        start_y = 112
+        return max(1, (HEIGHT - 60 - start_y) // (card_h + gap))
+
+    def _store_catalog_rects(self, n: int) -> list:
+        card_h, gap = 68, 6
+        start_y = 112
+        scroll = self.store_scroll
+        visible = self._store_visible_count()
+        count = min(visible, max(0, n - scroll))
+        return [
+            pygame.Rect(40, start_y + j * (card_h + gap), WIDTH - 80, card_h)
+            for j in range(count)
+            if start_y + j * (card_h + gap) + card_h <= HEIGHT - 60
+        ]
+
+    def _draw_game_store(self):
+        self._draw_section_header("\u22c6 Game Store", COL_STORE)
+        mx, my = self._mouse_pos
+        installed_ids = {g["id"] for g in self.games}
+
+        # Status bar
+        status_s = self.font_sm.render(self.store_status, True,
+                                       COL_ERROR if self.store_status.startswith("Error")
+                                       or self.store_status.startswith("Failed")
+                                       else COL_DIM)
+        self.screen.blit(status_s, (24, 70))
+
+        # Set Server button (dev mode only)
+        if self.dev_mode:
+            ur = self._store_seturl_rect()
+            u_hov = ur.collidepoint(mx, my)
+            u_bg = _lerp_color(COL_CARD, (83, 217, 230), 0.3 if u_hov else 0.08)
+            pygame.draw.rect(self.screen, u_bg, ur, border_radius=8)
+            pygame.draw.rect(self.screen, (83, 217, 230), ur, 1, border_radius=8)
+            lbl_u = self.font_hint.render("X Set Server", True, (83, 217, 230))
+            self.screen.blit(lbl_u, (ur.x + ur.w // 2 - lbl_u.get_width() // 2,
+                                      ur.y + ur.h // 2 - lbl_u.get_height() // 2))
+
+        # Refresh button
+        rr = self._store_refresh_rect()
+        r_hov = rr.collidepoint(mx, my)
+        r_bg = _lerp_color(COL_CARD, COL_STORE, 0.35 if r_hov else 0.12)
+        pygame.draw.rect(self.screen, r_bg, rr, border_radius=8)
+        pygame.draw.rect(self.screen, COL_STORE, rr, 1, border_radius=8)
+        lbl_r = self.font_hint.render(
+            "\u21bb Refresh" if not self.store_loading else "Loading\u2026",
+            True, COL_STORE)
+        self.screen.blit(lbl_r, (rr.x + rr.w // 2 - lbl_r.get_width() // 2,
+                                  rr.y + rr.h // 2 - lbl_r.get_height() // 2))
+
+        # Catalog list
+        n = len(self.store_catalog)
+        if n == 0:
+            ec_y = HEIGHT // 2 - 36
+            ec_rect = pygame.Rect(WIDTH // 2 - 200, ec_y, 400, 72)
+            pygame.draw.rect(self.screen, COL_CARD, ec_rect, border_radius=12)
+            pygame.draw.rect(self.screen, COL_DIM, ec_rect, 1, border_radius=12)
+            ec1 = self.font_sm.render("\u2606 No catalog loaded", True, COL_DIM)
+            ec2 = self.font_hint.render("Press Y or click Refresh to fetch.", True, COL_DIM)
+            self.screen.blit(ec1, (ec_rect.x + ec_rect.w // 2 - ec1.get_width() // 2, ec_y + 14))
+            self.screen.blit(ec2, (ec_rect.x + ec_rect.w // 2 - ec2.get_width() // 2, ec_y + 42))
+        else:
+            scroll = self.store_scroll
+            rects = self._store_catalog_rects(n)
+            visible_entries = self.store_catalog[scroll: scroll + len(rects)]
+            for j, (entry, r) in enumerate(zip(visible_entries, rects)):
+                i = scroll + j
+                is_sel = (i == self.store_idx)
+                is_hov = r.collidepoint(mx, my)
+                is_inst = entry.get("id") in installed_ids
+
+                bg = _lerp_color(COL_CARD, COL_SELECTED, 0.72) if is_sel \
+                     else (COL_CARD_HOV if is_hov else COL_CARD)
+                pygame.draw.rect(self.screen, bg, r, border_radius=10)
+                if is_sel:
+                    pygame.draw.rect(self.screen, COL_STORE, r, 2, border_radius=10)
+                    pygame.draw.rect(self.screen, COL_STORE,
+                                     pygame.Rect(r.x, r.y, 4, r.h), border_radius=2)
+
+                name_col = COL_TEXT if is_sel else COL_TEXT2
+                name_s = self.font_mdb.render(entry.get("name", "?"), True, name_col)
+                self.screen.blit(name_s, (60, r.y + (r.h - name_s.get_height()) // 2 - 10))
+
+                cat = entry.get("category", "")
+                ver = entry.get("version", "?")
+                meta = f"v{ver}" + (f"  \u2022  {cat}" if cat else "")
+                meta_s = self.font_hint.render(meta, True, COL_DIM)
+                self.screen.blit(meta_s, (60, r.y + (r.h + meta_s.get_height()) // 2 + 2))
+
+                # Right side: size + installed badge / action hint
+                sb = entry.get("size_bytes", 0)
+                size_str = store_mod.format_size(sb) if store_mod else ""
+                if is_inst:
+                    badge = self.font_hint.render(
+                        f"\u2713 Installed  {size_str}", True, COL_OK)
+                elif is_sel:
+                    badge = self.font_sm.render(
+                        f"A \u25b6 Download  {size_str}", True, COL_STORE)
+                else:
+                    badge = self.font_hint.render(size_str, True, COL_DIM)
+                self.screen.blit(badge, (r.right - badge.get_width() - 16,
+                                         r.y + (r.h - badge.get_height()) // 2))
+
+            # Scroll bar (only when list overflows viewport)
+            visible = self._store_visible_count()
+            if n > visible:
+                sb_x = WIDTH - 14
+                sb_top, sb_bot = 112, HEIGHT - 60
+                sb_h = sb_bot - sb_top
+                thumb_h = max(24, sb_h * visible // n)
+                thumb_y = sb_top + (sb_h - thumb_h) * scroll // max(1, n - visible)
+                pygame.draw.rect(self.screen, COL_CARD,
+                                 pygame.Rect(sb_x, sb_top, 6, sb_h), border_radius=3)
+                pygame.draw.rect(self.screen, COL_STORE,
+                                 pygame.Rect(sb_x, thumb_y, 6, thumb_h), border_radius=3)
+
+        # Download progress bar
+        recv, total = self._store_dl_progress
+        if self.store_loading and total > 0:
+            bar_h = 4
+            bar_y = HEIGHT - 48 - bar_h - 4
+            fill_w = int((WIDTH - 80) * recv / total)
+            pygame.draw.rect(self.screen, COL_CARD,
+                             pygame.Rect(40, bar_y, WIDTH - 80, bar_h))
+            pygame.draw.rect(self.screen, COL_STORE,
+                             pygame.Rect(40, bar_y, fill_w, bar_h))
+
+    # -----------------------------------------------------------------------
+    # Settings > Updates
+    # -----------------------------------------------------------------------
+    def _enter_settings_updates(self):
+        self.update_idx = 0
+        self.update_status = self.update_status or self._update_label()
+        self.update_info = (self.update_summary or {}).get("os_update") or {}
+        self.update_loading = bool(self._update_thread and self._update_thread.is_alive())
+        self._rescan_media()
+        if updates_mod:
+            self._update_local_files = updates_mod.find_local_updates(
+                search_paths=self._file_search_roots())
+        else:
+            self._update_local_files = self._find_files((".okupdate", ".ok-update"))
+        self.state = "settings_updates"
+
+    def _get_update_actions(self) -> list:
+        actions = list(_UPDATE_ACTIONS_BASE)
+        if self.dev_mode:
+            actions.insert(3, "Choose Update Bundle  [dev]")
+            actions.append("Browse Update History  [dev]")
+        return actions
+
+    def _settings_updates_input(self, action: str, ev: dict = None):
+        n = len(self._get_update_actions())
+        if action in ("B", "START"):
+            self.state = "settings"
+        elif action == "DPAD_UP":
+            self.update_idx = (self.update_idx - 1) % n
+        elif action == "DPAD_DOWN":
+            self.update_idx = (self.update_idx + 1) % n
+        elif action == "A":
+            self._update_select()
+        elif action == "CLICK" and ev:
+            rects = self._subscreen_rects(n)
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    self.update_idx = i
+                    self._update_select()
+            return
+
+    def _update_select(self):
+        actions = self._get_update_actions()
+        if self.update_idx >= len(actions):
+            return
+        opt = actions[self.update_idx]
+        if "Check" in opt:
+            self._check_os_update()
+        elif opt.startswith("Download OS"):
+            self._download_os_update()
+        elif opt.startswith("Apply"):
+            self._apply_downloaded_update()
+        elif opt.startswith("Choose Update"):
+            self._enter_settings_update_files()
+        elif opt.startswith("Download Game"):
+            self._download_game_updates()
+        elif "Rollback" in opt:
+            self._rollback_update()
+        elif "Browse Update History" in opt:
+            self._enter_settings_update_catalog()
+
+    def _check_os_update(self):
+        if updates_mod is None:
+            self.update_status = "Updates module unavailable."
+            return
+        self.update_status = "Checking for updates..."
+        self._next_update_check = 0.0
+        self._maybe_check_updates(force=True)
+
+    def _download_url_to(self, url: str, dest: str, expected_sha256: str = "") -> str:
+        req = urllib.request.Request(url, headers={"User-Agent": "OkamaOS/1.0"})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            received = 0
+            os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
+            with open(dest, "wb") as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    received += len(chunk)
+                    self._update_download_progress = (received, total)
+                    if total:
+                        pct = int(received * 100 / total)
+                        self.update_status = f"Downloading OS update... {pct}%"
+        if expected_sha256 and updates_mod:
+            actual = updates_mod.sha256_file(dest)
+            if actual.lower() != expected_sha256.lower():
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+                raise ValueError("SHA-256 mismatch for downloaded update")
+        return dest
+
+    def _download_os_update(self):
+        if self.update_loading:
+            return
+        info = self.update_info or (self.update_summary or {}).get("os_update") or {}
+        url = info.get("download_url", "")
+        if not url:
+            self.update_status = "No downloadable OS update. Check first."
+            return
+        name = _safe_download_name(url, f"okamaos-v{info.get('version','latest')}.okupdate")
+        dest = os.path.join(self._downloads_dir(), name)
+        expected = info.get("sha256", "")
+        self.update_loading = True
+        self._update_download_progress = (0, int(info.get("size_bytes", 0) or 0))
+        self.update_status = "Downloading OS update..."
+
+        def _work():
+            try:
+                self._download_url_to(url, dest, expected_sha256=expected)
+                self._update_local_files = sorted(set(self._update_local_files + [dest]))
+                self.update_status = f"Downloaded OS update: {os.path.basename(dest)}"
+            except Exception as e:
+                self.update_status = f"Download failed: {str(e)[:72]}"
+            finally:
+                self.update_loading = False
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _apply_downloaded_update(self):
+        if self.update_loading:
+            return
+        if updates_mod:
+            files = updates_mod.find_local_updates(search_paths=self._file_search_roots())
+        else:
+            files = self._find_files((".okupdate", ".ok-update"))
+        if not files:
+            self.update_status = "No downloaded .okupdate bundles found."
+            return
+        path = max(files, key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0)
+        self._update_local_files = files
+        if self.dev_mode:
+            self._enter_settings_update_files()
+            return
+        self._enter_settings_update_confirm(path)
+
+    def _start_apply_update(self, path: str):
+        if self.update_loading:
+            return
+        if not path or not os.path.exists(path):
+            self.update_status = "Selected update bundle was not found."
+            self.state = "settings_updates"
+            return
+        self.update_loading = True
+        self.update_status = f"Applying {os.path.basename(path)}..."
+        self.state = "settings_updates"
+
+        def _work():
+            try:
+                res = subprocess.run(
+                    [_okama_update_path(), "apply", path],
+                    capture_output=True, text=True, timeout=300)
+                out = (res.stdout or res.stderr or "").strip().splitlines()
+                tail = out[-1] if out else "okama-update finished"
+                if res.returncode == 0:
+                    self.update_status = f"Applied update. Reboot recommended. {tail[:54]}"
+                else:
+                    self.update_status = f"Update failed: {tail[:72]}"
+            except Exception as e:
+                self.update_status = f"Update failed: {str(e)[:72]}"
+            finally:
+                self.update_loading = False
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _enter_settings_update_files(self):
+        if updates_mod:
+            files = updates_mod.find_local_updates(search_paths=self._file_search_roots())
+        else:
+            files = self._find_files((".okupdate", ".ok-update"))
+        self._update_local_files = files
+        self._update_file_idx = 0
+        if not files:
+            self.update_status = "No downloaded .okupdate bundles found."
+            self.state = "settings_updates"
+            return
+        self.state = "settings_update_files"
+
+    def _settings_update_files_input(self, action: str, ev: dict = None):
+        n = len(self._update_local_files)
+        if action in ("B", "START"):
+            self.state = "settings_updates"
+        elif action == "DPAD_UP" and n:
+            self._update_file_idx = (self._update_file_idx - 1) % n
+        elif action == "DPAD_DOWN" and n:
+            self._update_file_idx = (self._update_file_idx + 1) % n
+        elif action in ("A", "ENTER") and n:
+            self._enter_settings_update_confirm(self._update_local_files[self._update_file_idx])
+        elif action == "CLICK" and ev:
+            start, count = self._update_file_window()
+            rects = self._subscreen_rects(count)
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    idx = start + i
+                    if idx == self._update_file_idx:
+                        self._enter_settings_update_confirm(self._update_local_files[idx])
+                    else:
+                        self._update_file_idx = idx
+                    return
+
+    def _enter_settings_update_confirm(self, path: str):
+        self._pending_update_file = path
+        self.state = "settings_update_confirm"
+
+    def _settings_update_confirm_input(self, action: str, ev: dict = None):
+        if action in ("B", "START"):
+            self.update_status = "Update apply cancelled."
+            self.state = "settings_updates"
+        elif action in ("A", "ENTER"):
+            self._start_apply_update(self._pending_update_file)
+
+    def _update_file_window(self) -> tuple:
+        n = len(self._update_local_files)
+        if n <= 0:
+            return 0, 0
+        count = len(self._subscreen_rects(min(n, 12))) or 1
+        count = min(count, n)
+        start = min(max(0, self._update_file_idx - count // 2), max(0, n - count))
+        return start, count
+
+    def _rollback_update(self):
+        if self.update_loading:
+            return
+        self.update_loading = True
+        self.update_status = "Rolling back last update..."
+
+        def _work():
+            try:
+                res = subprocess.run(
+                    [_okama_update_path(), "rollback"],
+                    capture_output=True, text=True, timeout=240)
+                out = (res.stdout or res.stderr or "").strip().splitlines()
+                tail = out[-1] if out else "rollback finished"
+                if res.returncode == 0:
+                    self.update_status = f"Rollback complete. Reboot recommended. {tail[:50]}"
+                else:
+                    self.update_status = f"Rollback failed: {tail[:72]}"
+            except Exception as e:
+                self.update_status = f"Rollback failed: {str(e)[:72]}"
+            finally:
+                self.update_loading = False
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _download_game_updates(self):
+        if self.update_loading:
+            return
+        if store_mod is None:
+            self.update_status = "Store module unavailable."
+            return
+        game_updates = (self.update_summary or {}).get("game_updates", [])
+        downloadable = [g for g in game_updates if g.get("download_url")]
+        if not downloadable:
+            self.update_status = "No downloadable game updates. Check first."
+            return
+        self.update_loading = True
+        self.update_status = f"Downloading {len(downloadable)} game update(s)..."
+
+        def _work():
+            installed = []
+            failures = []
+            try:
+                for entry in downloadable:
+                    name = entry.get("name", entry.get("id", "game"))
+                    safe_name = _safe_download_name(
+                        entry.get("download_url", ""),
+                        f"{entry.get('id','game')}-{entry.get('version','latest')}.ok",
+                    )
+                    dest = os.path.join(self._game_downloads_dir(), safe_name)
+                    self.update_status = f"Downloading {name}..."
+                    try:
+                        store_mod.download_game(entry, dest)
+                        manifest = games_mod.install_package(dest, dev_mode=self.dev_mode)
+                        installed.append(f"{name} v{manifest.get('version', entry.get('version', '?'))}")
+                    except Exception as e:
+                        failures.append(f"{name}: {str(e)[:32]}")
+                self._refresh_games()
+                if installed and not failures:
+                    self.update_status = f"Downloaded and installed {len(installed)} game update(s)."
+                elif installed:
+                    self.update_status = f"Installed {len(installed)}; failed {len(failures)}."
+                else:
+                    self.update_status = f"Game update failed: {failures[0] if failures else 'unknown'}"
+            finally:
+                self.update_loading = False
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _draw_settings_updates(self):
+        self._draw_section_header("* Updates", COL_UPDATE)
+        mx, my = self._mouse_pos
+
+        # Current version row
+        cv = updates_mod.current_version() if updates_mod else "unknown"
+        ver_label = self.font_sm.render(
+            f"Current version:  v{cv}", True, COL_DIM)
+        self.screen.blit(ver_label, (48, 70))
+
+        # Status text
+        if self.update_status:
+            is_good = any(x in self.update_status for x in (
+                "up to date", "Installed", "Downloaded", "Applied", "Rollback complete"))
+            is_err = any(x in self.update_status for x in (
+                "failed", "Error", "unavailable", "mismatch"))
+            col = COL_OK if is_good else (COL_ERROR if is_err else COL_DIM)
+            st_s = self.font_sm.render(self.update_status, True, col)
+            self.screen.blit(st_s, (48, HEIGHT - 90))
+
+        # Update note
+        if self.update_info:
+            notes_s = self.font_hint.render(
+                (self.update_info.get("summary") or self.update_info.get("notes", ""))[:80],
+                True, COL_DIM)
+            self.screen.blit(notes_s, (48, HEIGHT - 110))
+        if self._update_local_files:
+            local = self.font_hint.render(
+                f"Downloaded bundles: {len(self._update_local_files)}", True, COL_DIM)
+            self.screen.blit(local, (48, HEIGHT - 132))
+        game_updates = (self.update_summary or {}).get("game_updates", [])
+        if game_updates:
+            y = HEIGHT - 150
+            title = self.font_hint.render(
+                f"Game updates: {len(game_updates)} installed game(s)", True, COL_UPDATE)
+            self.screen.blit(title, (48, y))
+            for item in game_updates[:3]:
+                y += 22
+                line = f"{item.get('name', item.get('id', '?'))}: {item.get('current_version', '?')} -> {item.get('version', '?')}"
+                surf = self.font_hint.render(line[:96], True, COL_DIM)
+                self.screen.blit(surf, (60, y))
+
+        # Action list
+        self._draw_subscreen_list(
+            [{"label": a} for a in self._get_update_actions()],
+            self.update_idx,
+            key_fn=lambda x: x["label"])
+
+    def _draw_settings_update_files(self):
+        self._draw_section_header("* Update Bundles  [dev]", COL_UPDATE)
+        files = self._update_local_files
+        if not files:
+            empty = self.font_sm.render("No downloaded .okupdate bundles found.", True, COL_DIM)
+            self.screen.blit(empty, (60, 130))
+            return
+        items = []
+        start, count = self._update_file_window()
+        visible = files[start:start + count]
+        for path in visible:
+            try:
+                size = _fmt_bytes(os.path.getsize(path))
+                mtime = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+            except OSError:
+                size, mtime = "missing", "unknown"
+            label = f"{os.path.basename(path)}  {size}  {mtime}"
+            items.append({"label": label, "path": path})
+        self._draw_subscreen_list(items, self._update_file_idx - start,
+                                  key_fn=lambda x: x["label"][:92])
+        if 0 <= self._update_file_idx < len(files):
+            path = files[self._update_file_idx]
+            detail = self.font_hint.render(path[:118], True, COL_DIM)
+            self.screen.blit(detail, (54, HEIGHT - 112))
+        hint = self.font_sm.render(
+            f"[A] Confirm selected update   {self._update_file_idx + 1}/{len(files)}   [Esc/B] Back",
+            True, COL_DIM)
+        self.screen.blit(hint, (54, HEIGHT - 82))
+
+    def _draw_settings_update_confirm(self):
+        self._draw_section_header("* Confirm Update", COL_UPDATE)
+        path = self._pending_update_file
+        name = os.path.basename(path) if path else "unknown"
+        try:
+            size = _fmt_bytes(os.path.getsize(path))
+            modified = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+        except OSError:
+            size, modified = "missing", "unknown"
+        lines = [
+            "Apply this system update now?",
+            f"Bundle: {name}",
+            f"Size: {size}",
+            f"Modified: {modified}",
+            "The updater will back up replaced system files before writing.",
+            "Reboot is usually required after a successful apply.",
+        ]
+        y = 118
+        for i, line in enumerate(lines):
+            font = self.font_mdb if i == 0 else self.font_sm
+            col = COL_UPDATE if i == 0 else COL_TEXT2
+            surf = font.render(line[:116], True, col)
+            self.screen.blit(surf, (64, y))
+            y += 42 if i == 0 else 32
+        if path:
+            detail = self.font_hint.render(path[:118], True, COL_DIM)
+            self.screen.blit(detail, (64, y + 12))
+        hint = self.font_sm.render("[A/Enter] Apply Update   [Esc/B] Cancel", True, COL_DIM)
+        self.screen.blit(hint, (64, HEIGHT - 82))
+
+    # -----------------------------------------------------------------------
+    # Settings > Update Catalog  [dev mode]
+    # -----------------------------------------------------------------------
+    def _enter_settings_update_catalog(self):
+        self._update_catalog_entries = []
+        self._update_catalog_idx = 0
+        self._update_catalog_status = "Fetching update history…"
+        self.state = "settings_update_catalog"
+        threading.Thread(target=self._load_update_catalog, daemon=True).start()
+
+    def _load_update_catalog(self):
+        try:
+            feed_url = self.conf.get(
+                "UPDATE_URL",
+                "https://zyntrixsolutions.github.io/okamaos/updates/feed.json",
+            )
+            req = urllib.request.Request(feed_url, headers={"User-Agent": "OkamaOS/2.1"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                feed = json.load(resp)
+            entries = []
+            latest = feed.get("latest")
+            if latest:
+                latest = dict(latest)
+                latest["_is_latest"] = True
+                entries.append(latest)
+            for prev in feed.get("previous", []):
+                entries.append(prev)
+            self._update_catalog_entries = entries
+            self._update_catalog_status = (
+                f"{len(entries)} version(s) in feed." if entries else "No history found."
+            )
+        except Exception as e:
+            self._update_catalog_status = f"Fetch failed: {str(e)[:60]}"
+
+    def _settings_update_catalog_input(self, action: str, ev: dict = None):
+        n = len(self._update_catalog_entries)
+        if action in ("B", "START"):
+            self.state = "settings_updates"
+        elif action == "DPAD_UP" and n:
+            self._update_catalog_idx = (self._update_catalog_idx - 1) % n
+        elif action == "DPAD_DOWN" and n:
+            self._update_catalog_idx = (self._update_catalog_idx + 1) % n
+        elif action == "A" and n:
+            self._catalog_download_entry(self._update_catalog_entries[self._update_catalog_idx])
+        elif action == "CLICK" and ev:
+            rects = self._subscreen_rects(n)
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    if i == self._update_catalog_idx:
+                        self._catalog_download_entry(self._update_catalog_entries[i])
+                    else:
+                        self._update_catalog_idx = i
+            return
+
+    def _catalog_download_entry(self, entry: dict):
+        url  = entry.get("download_url", "")
+        ver  = entry.get("version", "?")
+        sha  = entry.get("sha256", "")
+        size = int(entry.get("size_bytes") or 0)
+        if not url:
+            self._update_catalog_status = f"No download URL for v{ver}."
+            return
+        if self.update_loading:
+            self._update_catalog_status = "Download already in progress."
+            return
+        name = f"okamaos-v{ver}.okupdate"
+        dest = os.path.join(self._downloads_dir(), name)
+        self.update_loading = True
+        self._update_download_progress = (0, size)
+        self._update_catalog_status = f"Downloading v{ver}…"
+        def _work():
+            try:
+                self._download_url_to(url, dest, expected_sha256=sha)
+                if dest not in self._update_local_files:
+                    self._update_local_files = sorted(
+                        set(self._update_local_files + [dest])
+                    )
+                self._update_catalog_status = f"✓ v{ver} downloaded — go to Updates > Apply."
+                self.update_status = f"v{ver} ready — select Apply Downloaded Update."
+            except Exception as e:
+                self._update_catalog_status = f"Download failed: {str(e)[:60]}"
+            finally:
+                self.update_loading = False
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _draw_settings_update_catalog(self):
+        self._draw_section_header("* Update History  [dev]", COL_UPDATE)
+        # Status
+        if self._update_catalog_status:
+            is_err = any(x in self._update_catalog_status.lower()
+                         for x in ("failed", "error"))
+            is_ok  = self._update_catalog_status.startswith("\u2713")
+            col = COL_ERROR if is_err else (COL_OK if is_ok else COL_DIM)
+            s = self.font_sm.render(self._update_catalog_status, True, col)
+            self.screen.blit(s, (48, 70))
+
+        entries = self._update_catalog_entries
+        if not entries:
+            return
+
+        # Download progress bar (while active)
+        if self.update_loading:
+            recv, total = self._update_download_progress
+            if total:
+                bar_y = HEIGHT - 54
+                fill_w = int((WIDTH - 80) * recv / total)
+                pygame.draw.rect(self.screen, COL_CARD,
+                                 pygame.Rect(40, bar_y, WIDTH - 80, 4))
+                pygame.draw.rect(self.screen, COL_UPDATE,
+                                 pygame.Rect(40, bar_y, fill_w, 4))
+
+        # Build label items
+        items = []
+        for e in entries:
+            ver   = e.get("version", "?")
+            title = (e.get("title") or e.get("codename") or ver)[:42]
+            star  = " \u2605 latest" if e.get("_is_latest") else ""
+            label = f"v{ver}  {title}{star}"
+            items.append({"label": label})
+
+        self._draw_subscreen_list(items, self._update_catalog_idx,
+                                  key_fn=lambda x: x["label"])
+
+        # Notes for selected entry
+        if 0 <= self._update_catalog_idx < len(entries):
+            sel   = entries[self._update_catalog_idx]
+            notes = sel.get("notes") or []
+            if isinstance(notes, list) and notes:
+                y = HEIGHT - 126
+                for note in notes[:2]:
+                    ns = self.font_hint.render(note[:90], True, COL_DIM)
+                    self.screen.blit(ns, (48, y))
+                    y += 20
+
+        hint = self.font_hint.render("[A] Download  [B] Back", True, COL_DIM)
+        self.screen.blit(hint, (48, HEIGHT - 90))
+
+    # -----------------------------------------------------------------------
+    # Settings > Wallet
+    # -----------------------------------------------------------------------
+    def _enter_settings_wallet(self):
+        self._wallet_status = "Loading…"
+        self._wallet_info = []
+        self.state = "settings_wallet"
+        import threading
+        threading.Thread(target=self._load_wallet_info, daemon=True).start()
+
+    def _load_wallet_info(self):
+        rows = []
+        try:
+            import okamaos.wallet as w
+            if not w.is_initialized():
+                rows.append(("Status", "No wallet — run  okama-wallet init"))
+            else:
+                addr = w.address()
+                rows.append(("Address", addr[:20] + "…" + addr[-6:]))
+                try:
+                    rows.append(("ETH", w.format_eth(w.eth_balance(addr))))
+                except w.WalletError:
+                    rows.append(("ETH", "Offline"))
+                try:
+                    rows.append(("OKToken", w.format_ok(w.ok_balance(addr))))
+                except w.WalletError:
+                    rows.append(("OKToken", "Offline"))
+                try:
+                    import okamaos.nft as nft_mod
+                    assets = nft_mod.load_assets_cache()
+                    rows.append(("NFT Assets", str(len(assets)) + " cached"))
+                except Exception:
+                    rows.append(("NFT Assets", "—"))
+                try:
+                    tx_count = len(w.read_tx_log())
+                    rows.append(("TX Log", f"{tx_count} entries"))
+                except Exception:
+                    pass
+            self._wallet_info = rows
+            self._wallet_status = ""
+        except ImportError:
+            self._wallet_info = [("Status", "eth_account not installed")]
+            self._wallet_status = ""
+        except Exception as e:
+            self._wallet_info = [("Status", str(e)[:60])]
+            self._wallet_status = ""
+
+    def _settings_wallet_input(self, action: str, ev: dict = None):
+        if action in ("B", "START"):
+            self.state = "settings"
+        elif action == "A":
+            # A = unlock wallet with PIN to refresh live balances
+            self._wallet_pin_input = ""
+            self._wallet_pin_error = ""
+            self.state = "settings_wallet_unlock"
+
+    def _settings_wallet_unlock_input(self, action: str, ev: dict = None):
+        if action in ("B", "START"):
+            self.state = "settings_wallet"
+        elif action == "ENTER":
+            self._wallet_pin_confirm()
+
+    def _wallet_pin_confirm(self):
+        pin = self._wallet_pin_input.strip()
+        if not pin:
+            self._wallet_pin_error = "Enter your Parent PIN."
+            return
+        self._wallet_pin_error = ""
+        self._wallet_status = "Verifying PIN…"
+        self.state = "settings_wallet"
+        def _work():
+            try:
+                import okamaos.wallet as _wm
+                acct = _wm.load(pin)
+                eth_wei = _wm.eth_balance(acct.address)
+                okt_wei = _wm.ok_balance(acct.address)
+                self._wallet_info = [
+                    ("Address", acct.address),
+                    ("ETH balance", _wm.format_eth(eth_wei)),
+                    ("OKToken", _wm.format_ok(okt_wei)),
+                ]
+                self._wallet_status = ""
+            except Exception as e:
+                self._wallet_status = f"Error: {str(e)[:60]}"
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _draw_wallet_unlock_overlay(self):
+        COL_WALLET = (100, 180, 255)
+        bw, bh = WIDTH - 80, 170
+        bx, by = 40, HEIGHT // 2 - bh // 2
+        overlay = _alpha_surf(bw, bh, (0, 0, 0), 220)
+        self.screen.blit(overlay, (bx, by))
+        pygame.draw.rect(self.screen, COL_WALLET,
+                         pygame.Rect(bx, by, bw, bh), 2, border_radius=12)
+        title_s = self.font_sm.render("⋆ Enter Parent PIN to unlock wallet", True, COL_WALLET)
+        self.screen.blit(title_s, (bx + 18, by + 14))
+        if self._wallet_pin_error:
+            err_s = self.font_hint.render(self._wallet_pin_error, True, COL_ERROR)
+            self.screen.blit(err_s, (bx + 18, by + 42))
+        # Masked PIN display
+        masked = "•" * len(self._wallet_pin_input) or "_"
+        inp_y = by + 72
+        inp_w = bw - 40
+        pygame.draw.rect(self.screen, (20, 24, 18),
+                         pygame.Rect(bx + 18, inp_y, inp_w, 36), border_radius=6)
+        pygame.draw.rect(self.screen, COL_WALLET,
+                         pygame.Rect(bx + 18, inp_y, inp_w, 36), 1, border_radius=6)
+        pin_s = self.font_mdb.render(masked, True, COL_TEXT)
+        self.screen.blit(pin_s, (bx + 28, inp_y + 8))
+        hint_s = self.font_hint.render("[Enter] Confirm   [Esc/B] Cancel", True, COL_DIM)
+        self.screen.blit(hint_s, (bx + 18, by + bh - 30))
+
+    def _draw_settings_wallet(self):
+        COL_WALLET = (100, 180, 255)
+        self._draw_section_header("* Wallet  (Base)", COL_WALLET)
+        y = 130
+        if self._wallet_status:
+            col = COL_ERROR if self._wallet_status.startswith("Error") else COL_DIM
+            s = self.font_md.render(self._wallet_status, True, col)
+            self.screen.blit(s, (70, y))
+        elif self._wallet_info:
+            for label, value in self._wallet_info:
+                lbl_s = self.font_sm.render(label, True, COL_DIM)
+                val_font = self.font_sm if len(value) > 40 else self.font_mdb
+                val_s = val_font.render(value, True, COL_TEXT)
+                self.screen.blit(lbl_s, (70, y))
+                self.screen.blit(val_s, (70, y + 22))
+                y += 70
+                if y + 60 > HEIGHT - 60:
+                    break
+        else:
+            empty = self.font_sm.render("Press [A] to unlock wallet with Parent PIN.",
+                                        True, COL_DIM)
+            self.screen.blit(empty, (70, y))
+        hint = self.font_sm.render(
+            "[A] Unlock  [Esc/B] Back    okama-wallet CLI for full management",
+            True, COL_DIM)
+        self.screen.blit(hint, (70, HEIGHT - 90))
+
+    # -----------------------------------------------------------------------
+    # Settings > Support
+    # -----------------------------------------------------------------------
+    def _settings_support_input(self, action: str, ev: dict = None):
+        if action in ("B", "START", "A"):
+            self.state = "settings"
+
+    def _draw_settings_support(self):
+        self._draw_section_header("* Support", COL_SETTINGS)
+        email = self.conf.get("SUPPORT_EMAIL", "team@zyntrix.solutions")
+        website = self.conf.get("SUPPORT_WEBSITE", "https://okamaos.zyntrix.solutions")
+        store_url = self.conf.get(
+            "STORE_URL", "https://zyntrixsolutions.github.io/okamaos/catalog/apps.json")
+        update_url = self.conf.get(
+            "UPDATE_URL", "https://zyntrixsolutions.github.io/okamaos/updates/feed.json")
+        rows = [
+            ("Technical partner", "Zyntrix Solutions"),
+            ("Email", email),
+            ("Website", website),
+            ("Game catalog", store_url),
+            ("OS updates", update_url),
+        ]
+        y = 130
+        for label, value in rows:
+            label_s = self.font_sm.render(label, True, COL_DIM)
+            value_font = self.font_sm if len(value) > 44 else self.font_mdb
+            value_s = value_font.render(value, True, COL_TEXT)
+            self.screen.blit(label_s, (70, y))
+            self.screen.blit(value_s, (70, y + 24))
+            y += 78
+        hint = self.font_sm.render("[Esc/B] Back to Settings", True, COL_DIM)
+        self.screen.blit(hint, (70, HEIGHT - 90))
+
+    # -----------------------------------------------------------------------
+    # Dev Console (secret mode)
+    # -----------------------------------------------------------------------
+    def _dev_console_input(self, action: str, ev: dict = None):
+        if action == "DPAD_UP":
+            self._dev_history_prev()
+            return
+        if action == "DPAD_DOWN":
+            self._dev_history_next()
+            return
+        if action in ("B", "START"):
+            self.state = "settings"
+            return
+        if action == "ENTER" or action == "A":
+            cmd = self._dev_console_cmd.rstrip()
+            if cmd == "exit":
+                self._close_dev_shell()
+                self.state = "settings"
+                self._dev_console_cmd = ""
+                return
+            if cmd == "help":
+                self._append_dev_history("> Persistent /bin/sh session. Commands keep cwd and env.")
+                self._append_dev_history("> Commands: exit, clear, help, reboot, poweroff, ip, ps, df, ls, cat <file>")
+                self._append_dev_history("> Use Up/Down to recall previous commands.")
+                self._dev_console_cmd = ""
+                return
+            if cmd == "clear":
+                self._clear_dev_history()
+                self._dev_console_cmd = ""
+                return
+            if self._dev_console_cmd:
+                self._remember_dev_command(self._dev_console_cmd)
+            self._write_dev_shell_line(self._dev_console_cmd)
+            self._dev_console_cmd = ""
+
+    def _append_dev_history(self, line: str):
+        text = str(line).replace("\r\n", "\n").replace("\r", "\n")
+        parts = text.split("\n") if text else [""]
+        with self._dev_console_lock:
+            for part in parts:
+                self._dev_console_history.append(part[:180])
+            self._trim_dev_history_locked()
+
+    def _clear_dev_history(self):
+        with self._dev_console_lock:
+            self._dev_console_history.clear()
+            self._dev_terminal_line = ""
+            self._dev_console_scroll = 0
+
+    def _trim_dev_history_locked(self):
+        while len(self._dev_console_history) > 420:
+            self._dev_console_history.pop(0)
+        self._dev_console_scroll = max(0, len(self._dev_console_history) - 10)
+
+    def _append_dev_output(self, text: str):
+        if not text:
+            return
+        text = _ANSI_RE.sub("", text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        with self._dev_console_lock:
+            for ch in text:
+                if ch == "\n":
+                    self._dev_console_history.append(self._dev_terminal_line[:180])
+                    self._dev_terminal_line = ""
+                    self._trim_dev_history_locked()
+                elif ch == "\b":
+                    self._dev_terminal_line = self._dev_terminal_line[:-1]
+                elif ch == "\t":
+                    self._dev_terminal_line += "    "
+                elif ord(ch) >= 32:
+                    self._dev_terminal_line += ch
+                    if len(self._dev_terminal_line) >= 180:
+                        self._dev_console_history.append(self._dev_terminal_line[:180])
+                        self._dev_terminal_line = self._dev_terminal_line[180:]
+                        self._trim_dev_history_locked()
+
+    def _remember_dev_command(self, cmd: str):
+        if not self._dev_command_history or self._dev_command_history[-1] != cmd:
+            self._dev_command_history.append(cmd)
+        self._dev_command_history = self._dev_command_history[-80:]
+        self._dev_history_idx = None
+        self._dev_history_draft = ""
+
+    def _dev_history_prev(self):
+        if not self._dev_command_history:
+            return
+        if self._dev_history_idx is None:
+            self._dev_history_draft = self._dev_console_cmd
+            self._dev_history_idx = len(self._dev_command_history) - 1
+        else:
+            self._dev_history_idx = max(0, self._dev_history_idx - 1)
+        self._dev_console_cmd = self._dev_command_history[self._dev_history_idx]
+
+    def _dev_history_next(self):
+        if self._dev_history_idx is None:
+            return
+        self._dev_history_idx += 1
+        if self._dev_history_idx >= len(self._dev_command_history):
+            self._dev_history_idx = None
+            self._dev_console_cmd = self._dev_history_draft
+        else:
+            self._dev_console_cmd = self._dev_command_history[self._dev_history_idx]
+
+    def _ensure_dev_shell(self):
+        proc = self._dev_shell_proc
+        if proc is not None and proc.poll() is None and self._dev_shell_fd is not None:
+            return proc
+        env = os.environ.copy()
+        env["TERM"] = "dumb"
+        env["NO_COLOR"] = "1"
+        env["LS_COLORS"] = ""
+        env.setdefault("HOME", "/root")
+        env["SHELL"] = "/bin/sh"
+        env["PS1"] = "okama$ "
+        master_fd = None
+        slave_fd = None
+        try:
+            master_fd, slave_fd = pty.openpty()
+            self._dev_shell_proc = subprocess.Popen(
+                [env["SHELL"], "-i"],
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                close_fds=True,
+                cwd=env.get("HOME", "/"),
+                env=env,
+            )
+            os.close(slave_fd)
+            slave_fd = None
+            self._dev_shell_fd = master_fd
+            self._dev_shell_reader = threading.Thread(
+                target=self._read_dev_shell,
+                args=(self._dev_shell_proc, master_fd),
+                daemon=True)
+            self._dev_shell_reader.start()
+            self._append_dev_history("> Persistent terminal session ready.")
+            return self._dev_shell_proc
+        except Exception as e:
+            for fd in (master_fd, slave_fd):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            self._append_dev_history(f"Error: failed to start shell: {e}")
+            self._dev_shell_proc = None
+            self._dev_shell_fd = None
+            return None
+
+    def _close_dev_shell(self):
+        proc = self._dev_shell_proc
+        fd = self._dev_shell_fd
+        self._dev_shell_proc = None
+        self._dev_shell_fd = None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=0.2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def _read_dev_shell(self, proc, fd: int):
+        while True:
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            self._append_dev_output(data.decode(errors="replace"))
+        if self._dev_shell_proc is proc:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            status = proc.poll()
+            if status is None:
+                try:
+                    status = proc.wait(timeout=0.1)
+                except Exception:
+                    status = "closed"
+            self._dev_shell_proc = None
+            self._dev_shell_fd = None
+            self._append_dev_history(f"[shell exited {status}]")
+
+    def _write_dev_shell_line(self, line: str):
+        proc = self._ensure_dev_shell()
+        fd = self._dev_shell_fd
+        if proc is None or fd is None:
+            return
+        try:
+            os.write(fd, (line + "\n").encode())
+        except OSError as e:
+            self._append_dev_history(f"Error: {e}")
+
+    def _dev_history_snapshot(self):
+        with self._dev_console_lock:
+            lines = list(self._dev_console_history)
+            if self._dev_terminal_line:
+                lines.append(self._dev_terminal_line)
+            return lines
+
+    def _draw_dev_console(self):
+        self._draw_section_header("$ Dev Console", COL_DEV)
+        bg = pygame.Rect(40, 64, WIDTH - 80, HEIGHT - 128)
+        pygame.draw.rect(self.screen, (0, 0, 0), bg, border_radius=8)
+        pygame.draw.rect(self.screen, COL_DEV, bg, 2, border_radius=8)
+        start_y = 74
+        line_h = 20
+        max_lines = (HEIGHT - 180) // line_h
+        lines = self._dev_history_snapshot()
+        hist = lines[-max_lines:] if lines else []
+        for i, line in enumerate(hist):
+            col = COL_DEV if line.startswith(">") else COL_TEXT
+            s = self.font_sm.render(line, True, col)
+            self.screen.blit(s, (50, start_y + i * line_h))
+        input_y = HEIGHT - 100
+        pygame.draw.line(self.screen, COL_BORDER, (50, input_y - 8), (WIDTH - 50, input_y - 8), 1)
+        prompt = self.font_sm.render(">>> ", True, COL_DEV)
+        self.screen.blit(prompt, (50, input_y))
+        cmd_txt = self._dev_console_cmd
+        if (self._tick // 30) % 2 == 0:
+            cmd_txt += "_"
+        prompt_w = prompt.get_width()
+        avail_w = WIDTH - 110 - prompt_w
+        cmd_display = cmd_txt
+        while self.font_sm.size(cmd_display)[0] > avail_w and len(cmd_display) > 1:
+            cmd_display = cmd_display[1:]
+        if len(cmd_display) < len(cmd_txt):
+            cmd_display = "\u2026" + cmd_display[1:]
+        cmd_surf = self.font_sm.render(cmd_display, True, COL_TEXT)
+        self.screen.blit(cmd_surf, (50 + prompt_w, input_y))
+        proc = self._dev_shell_proc
+        status = "connected" if proc is not None and proc.poll() is None else "closed"
+        hint = self.font_hint.render(
+            f"[Enter] Send   [Up/Down] History   [Esc/B] Back   shell: {status}",
+            True, COL_DIM)
+        self.screen.blit(hint, (50, HEIGHT - 70))
+
+    # -----------------------------------------------------------------------
+    def _draw_install_browse(self):
+        self._draw_section_header("> Install Game", COL_PLAY)
+
+        if not self.install_files:
+            empty_r = pygame.Rect(40, HEIGHT // 2 - 80, WIDTH - 80, 160)
+            pygame.draw.rect(self.screen, COL_CARD, empty_r, border_radius=14)
+            pygame.draw.rect(self.screen, COL_BORDER, empty_r, 1,
+                             border_radius=14)
+            for j, txt in enumerate([
+                "No .ok packages found",
+                "Place USB drive with .ok files at /mnt or /media",
+                "Or copy packages to /var/okamaos/updates/",
+            ]):
+                col = COL_DIM if j else self.font_md.size(txt)[0] and COL_DIM
+                surf = (self.font_md if j == 0 else self.font_sm).render(
+                    txt, True, COL_DIM)
+                self.screen.blit(
+                    surf,
+                    (WIDTH // 2 - surf.get_width() // 2,
+                     empty_r.y + 20 + j * 44))
+        else:
+            items = [{"label": os.path.basename(f), "path": f}
+                     for f in self.install_files]
+            self._draw_subscreen_list(items, self.install_idx,
+                                      key_fn=lambda x: x["label"])
+
+        if self.install_status:
+            col = COL_ERROR if self.install_status.startswith(
+                ("Error", "Bad")) else COL_OK
+            surf = self.font_sm.render(self.install_status, True, col)
+            self.screen.blit(surf, (WIDTH // 2 - surf.get_width() // 2,
+                                    HEIGHT - 80))
+
+    def _power_input(self, action: str, ev: dict = None):
+        n = len(POWER_OPTIONS)
+        if action == "DPAD_DOWN":
+            self.power_idx = (self.power_idx + 1) % n
+        elif action == "DPAD_UP":
+            self.power_idx = (self.power_idx - 1) % n
+        elif action == "CLICK" and ev:
+            rects = self._power_rects()
+            for i, r in enumerate(rects):
+                if r.collidepoint(ev["pos"]):
+                    self.power_idx = i
+                    self._power_select()
+            return
+        elif action == "A":
+            self._power_select()
+        elif action == "B":
+            self.state = "home"
+
+    def _power_select(self):
+        opt = POWER_OPTIONS[self.power_idx]
+        if opt == "Restart":
+            subprocess.call(["reboot"])
+        elif opt == "Shut Down":
+            subprocess.call(["poweroff"])
+        elif opt == "Cancel":
+            self.state = "home"
+
+    def _power_rects(self):
+        btn_w, btn_h = 320, 68
+        return [
+            pygame.Rect(WIDTH // 2 - btn_w // 2, 260 + i * 90, btn_w, btn_h)
+            for i in range(len(POWER_OPTIONS))
+        ]
+
+    # -----------------------------------------------------------------------
+    # Drawing
+    # -----------------------------------------------------------------------
+    def _draw(self):
+        # Background gradient
+        if self._bg_surf:
+            self.screen.blit(self._bg_surf, (0, 0))
+        else:
+            self.screen.fill(COL_BG)
+
+        if self.state == "home":
+            self._draw_home()
+        elif self.state == "play":
+            self._draw_play()
+        elif self.state == "settings":
+            self._draw_settings()
+        elif self.state == "power":
+            self._draw_power()
+        elif self.state == "settings_controllers":
+            self._draw_settings_controllers()
+        elif self.state == "settings_bluetooth":
+            self._draw_settings_bluetooth()
+        elif self.state == "settings_audio":
+            self._draw_settings_audio()
+        elif self.state == "settings_network":
+            self._draw_settings_network()
+        elif self.state == "settings_storage":
+            self._draw_settings_storage()
+        elif self.state == "install_browse":
+            self._draw_install_browse()
+        elif self.state == "game_store":
+            self._draw_game_store()
+        elif self.state == "store_url_entry":
+            self._draw_game_store()
+            self._draw_store_url_entry()
+        elif self.state == "settings_updates":
+            self._draw_settings_updates()
+        elif self.state == "settings_update_files":
+            self._draw_settings_update_files()
+        elif self.state == "settings_update_confirm":
+            self._draw_settings_update_confirm()
+        elif self.state == "settings_install":
+            self._draw_settings_install()
+        elif self.state == "settings_wallet":
+            self._draw_settings_wallet()
+        elif self.state == "settings_wallet_unlock":
+            self._draw_settings_wallet()
+            self._draw_wallet_unlock_overlay()
+        elif self.state == "settings_update_catalog":
+            self._draw_settings_update_catalog()
+        elif self.state == "settings_support":
+            self._draw_settings_support()
+        elif self.state == "dev_console":
+            self._draw_dev_console()
+        elif self.state == "wifi_networks":
+            self._draw_wifi_networks()
+        elif self.state == "wifi_psk":
+            self._draw_wifi_psk()
+
+        # Separator lines drawn after state content so they appear on top.
+        if self.state != "home":
+            pygame.draw.line(self.screen, COL_BORDER, (0, 56), (WIDTH, 56), 1)
+        pygame.draw.line(self.screen, COL_BORDER, (0, HEIGHT-44), (WIDTH, HEIGHT-44), 1)
+
+        self._draw_message()
+        self._draw_hints()
+        self._draw_clock()
+
+        if self.dev_mode:
+            self._draw_debug_overlay()
+
+        pygame.display.flip()
+
+    def _draw_home(self):
+        mx, my = self._mouse_pos
+        self._draw_home_top_bar()
+
+        # Center brand lockup. Keep one mark in the header; the hero is text-only.
+        mark_x = WIDTH // 2 - 166
+        mark_y = 112 if HEIGHT >= 680 else 96
+        title_shadow = self.font_xl.render("OkamaOS", True, (18, 28, 45))
+        title = self.font_xl.render("OkamaOS", True, COL_TEXT)
+        title_x = WIDTH // 2 - title.get_width() // 2
+        self.screen.blit(title_shadow, (title_x + 2, mark_y + 3))
+        self.screen.blit(title, (title_x, mark_y))
+        wave = self.font_mdb.render("FIRST WAVE", True, COL_ACCENT2)
+        version = self.font_hint.render(f"v{self._os_version()}", True, COL_DIM)
+        wave_y = mark_y + title.get_height() - 6
+        wave_x = WIDTH // 2 - (wave.get_width() + 8 + version.get_width()) // 2
+        self.screen.blit(wave, (wave_x, wave_y))
+        self.screen.blit(version, (wave_x + wave.get_width() + 8, wave_y + 5))
+
+        subtitles = {
+            "Play": f"{len(self.games)} installed games",
+            "Settings": "Network, BT, input, storage, updates",
+            "Power": "Restart, shut down, or return safely",
+        }
+        rects = self._home_section_rects()
+        for i, section in enumerate(SECTIONS):
+            r = rects[i]
+            col = SECTION_COLORS[i]
+            is_sel = i == self.section_idx
+            is_hov = r.collidepoint(mx, my)
+            shadow = pygame.Rect(r.x + 1, r.y + 2, r.w, r.h)
+            pygame.draw.rect(self.screen, (0, 0, 0), shadow, border_radius=8)
+            fill = _lerp_color(COL_CARD, col, 0.10 if is_sel else (0.04 if is_hov else 0.0))
+            pygame.draw.rect(self.screen, fill, r, border_radius=8)
+            border = col if is_sel else (COL_BORDER if is_hov else (13, 36, 52))
+            pygame.draw.rect(self.screen, border, r, 2 if is_sel else 1, border_radius=8)
+            if is_sel:
+                pygame.draw.rect(self.screen, col,
+                                 pygame.Rect(r.x, r.y, 5, r.h), border_radius=3)
+            label = self.font_lg.render(section, True, COL_TEXT if is_sel else COL_TEXT2)
+            label_y = r.y + max(8, (r.h - 48) // 2)
+            self.screen.blit(label, (r.x + 38, label_y))
+            sub = self.font_sm.render(subtitles[section], True, COL_DIM)
+            self.screen.blit(sub, (r.x + 40, min(r.y + r.h - 24, label_y + 36)))
+            if is_sel:
+                arrow = self.font_lg.render(">", True, col)
+                self.screen.blit(arrow, (r.right - 44, r.y + (r.h - arrow.get_height()) // 2))
+
+        # Bottom status tiles
+        stats = [
+            ("Games", str(len(self.games))),
+            ("Network", self._network_status_label()),
+            ("Bluetooth", self._bluetooth_status_label()),
+            ("Input", self._input_status_label()),
+            ("Updates", self._update_label()),
+        ]
+        gap = 10
+        tile_w = max(128, min(190, (rects[0].w - gap * (len(stats) - 1)) // len(stats)))
+        total_w = tile_w * len(stats) + gap * (len(stats) - 1)
+        x = WIDTH // 2 - total_w // 2
+        tile_h = 54 if HEIGHT >= 680 else 46
+        y = rects[-1].bottom + (16 if HEIGHT >= 680 else 12)
+        for label, value in stats:
+            tile = pygame.Rect(x, y, tile_w, tile_h)
+            pygame.draw.rect(self.screen, (2, 9, 20), tile, border_radius=8)
+            pygame.draw.rect(self.screen, (14, 52, 72), tile, 1, border_radius=8)
+            lsurf = self.font_hint.render(label, True, COL_DIM)
+            status_value = value
+            if label == "Input":
+                status_value = value.replace("kbd: ready, pads:", "kbd, pads")
+            vsurf = self.font_hint.render(status_value[:18], True, COL_TEXT)
+            self.screen.blit(lsurf, (tile.x + 14, tile.y + 7))
+            self.screen.blit(vsurf, (tile.x + 14, tile.y + 27))
+            x += tile_w + gap
+
+    def _draw_home_top_bar(self):
+        bar = pygame.Rect(24, 22, WIDTH - 48, 58)
+        pygame.draw.rect(self.screen, (0, 8, 20), bar, border_radius=8)
+        pygame.draw.rect(self.screen, (14, 62, 92), bar, 1, border_radius=8)
+        self._draw_okamalabs_mark(bar.x + 32, bar.y + 29, 21, COL_TEXT)
+        brand = self.font_mdb.render("OkamaLabs", True, COL_TEXT)
+        self.screen.blit(brand, (bar.x + 66, bar.y + (bar.h - brand.get_height()) // 2))
+
+        update_label = self._update_label().replace(" updates", " upd").replace(" update", " upd")
+        status_items = [
+            ("NET", self._network_status_label()),
+            ("UPD", update_label),
+            ("BT", self._bluetooth_status_label()),
+            ("", f"{self._sast_time('%I:%M %p')} SAST"),
+        ]
+        x = bar.right - 20
+        for key, value in reversed(status_items):
+            text = f"{key}: {value}" if key else value
+            muted = value in ("Offline", "Off")
+            surf = self.font_hint.render(text, True, COL_TEXT2 if muted else COL_TEXT)
+            pad_x = 10
+            pill = pygame.Rect(x - surf.get_width() - pad_x * 2, bar.y + 15,
+                               surf.get_width() + pad_x * 2, 28)
+            pygame.draw.rect(self.screen, (2, 14, 26), pill, border_radius=6)
+            pygame.draw.rect(self.screen, (15, 54, 76), pill, 1, border_radius=6)
+            self.screen.blit(surf, (pill.x + pad_x, pill.y + 6))
+            x = pill.x - 8
+
+    def _draw_okamalabs_mark(self, cx: int, cy: int, radius: int, color):
+        for i in range(6):
+            r = max(4, radius - i * max(3, radius // 7))
+            offset = i * max(2, radius // 10)
+            pygame.draw.circle(self.screen, color, (cx + offset, cy), r, 2)
+        pygame.draw.circle(self.screen, COL_ACCENT, (cx + radius // 2, cy), 3)
+
+    def _network_status_label(self) -> str:
+        try:
+            with open("/proc/net/route", encoding="utf-8") as f:
+                for line in f.readlines()[1:]:
+                    parts = line.split()
+                    if len(parts) > 2 and parts[1] == "00000000":
+                        return "Online"
+        except OSError:
+            pass
+        return "Offline"
+
+    def _bluetooth_status_label(self) -> str:
+        now = time.monotonic()
+        ts, label = self._bt_label_cache
+        if now - ts < 4.0:
+            return label
+        label = self._read_bluetooth_status_label()
+        self._bt_label_cache = (now, label)
+        return label
+
+    def _read_bluetooth_status_label(self) -> str:
+        if self.conf.get("BLUETOOTH_ENABLED", "yes").lower() != "yes":
+            return "Off"
+        try:
+            status = bt_mod.status(timeout=1)
+            raw = status.get("raw", "").lower()
+            if status.get("powered") == "yes":
+                return "On"
+            if "no default controller" in raw or "not available" in raw:
+                return "Off"
+        except Exception:
+            pass
+        try:
+            if glob.glob("/sys/class/bluetooth/hci*"):
+                return "Ready"
+        except Exception:
+            pass
+        return "Off"
+
+    def _input_status_label(self) -> str:
+        pads = len(glob.glob("/dev/input/js*"))
+        return f"kbd: ready, pads: {pads}"
+
+    def _play_footer_rects(self):
+        """Return (store_rect, install_rect) for the two footer action pills."""
+        btn_w, btn_h = 260, 46
+        gap = 16
+        total = btn_w * 2 + gap
+        x0 = WIDTH // 2 - total // 2
+        y = HEIGHT - btn_h - 48
+        return (
+            pygame.Rect(x0, y, btn_w, btn_h),
+            pygame.Rect(x0 + btn_w + gap, y, btn_w, btn_h),
+        )
+
+    def _draw_play(self):
+        self._draw_section_header("> Play", COL_PLAY)
+        mx, my = self._mouse_pos
+
+        # --- Sub-header row: count + quick hints ---
+        n = len(self.games)
+        count_str = f"{n} game{'s' if n != 1 else ''} installed"
+        count_s = self.font_sm.render(count_str, True, COL_DIM)
+        self.screen.blit(count_s, (48, 70))
+        hint_s = self.font_hint.render("A: Launch   Y: Store   X: Install .ok",
+                                       True, COL_DIM)
+        self.screen.blit(hint_s, (WIDTH - hint_s.get_width() - 24, 70))
+
+        if not self.games:
+            # Empty state
+            empty_r = pygame.Rect(120, 180, WIDTH - 240, 130)
+            pygame.draw.rect(self.screen, COL_CARD, empty_r, border_radius=14)
+            pygame.draw.rect(self.screen, COL_BORDER, empty_r, 1, border_radius=14)
+            msg1 = self.font_md.render("No games installed yet", True, COL_DIM)
+            msg2 = self.font_sm.render(
+                "Visit the Game Store or install a .ok file from USB",
+                True, COL_DIM)
+            self.screen.blit(msg1, (WIDTH//2 - msg1.get_width()//2, empty_r.y + 24))
+            self.screen.blit(msg2, (WIDTH//2 - msg2.get_width()//2, empty_r.y + 72))
+        else:
+            card_h, gap, start_y = 72, 8, 100
+            for i, g in enumerate(self.games):
+                y = start_y + i * (card_h + gap)
+                if y + card_h > HEIGHT - 64:
+                    break
+                r = pygame.Rect(40, y, WIDTH - 80, card_h)
+                is_sel = (i == self.list_idx)
+                is_hov = r.collidepoint(mx, my)
+
+                bg = _lerp_color(COL_CARD, COL_SELECTED, 0.75) if is_sel \
+                     else (COL_CARD_HOV if is_hov else COL_CARD)
+                pygame.draw.rect(self.screen, bg, r, border_radius=10)
+                if is_sel:
+                    pygame.draw.rect(self.screen, COL_PLAY, r, 2, border_radius=10)
+                    pygame.draw.rect(self.screen, COL_PLAY,
+                                     pygame.Rect(r.x, r.y, 4, r.h), border_radius=2)
+
+                # Game name
+                name_s = self.font_mdb.render(
+                    g["name"], True, COL_TEXT if is_sel else COL_TEXT2)
+                self.screen.blit(name_s, (60, y + (card_h - name_s.get_height()) // 2 - 10))
+
+                # ID + version sub-line
+                sub_s = self.font_hint.render(
+                    f"{g.get('id','')}  •  v{g.get('version','?')}",
+                    True, COL_DIM)
+                self.screen.blit(sub_s, (60, y + (card_h - sub_s.get_height()) // 2 + 14))
+
+                # Right side: launch hint (selected) or size badge
+                if is_sel:
+                    lbl = self.font_sm.render("A  ▶  Launch", True, COL_OK)
+                    self.screen.blit(lbl, (r.right - lbl.get_width() - 16,
+                                          y + (card_h - lbl.get_height()) // 2))
+                else:
+                    size_mb = g.get("size_mb", 0)
+                    if not size_mb:
+                        try:
+                            gd = games_mod.game_dir(g["id"])
+                            size_mb = sum(
+                                f.stat().st_size for f in
+                                __import__("pathlib").Path(gd).rglob("*")
+                                if f.is_file()
+                            ) / (1024 * 1024)
+                        except Exception:
+                            size_mb = 0
+                    if size_mb:
+                        sz_s = self.font_hint.render(
+                            f"{size_mb:.1f} MB", True, COL_DIM)
+                        self.screen.blit(sz_s, (r.right - sz_s.get_width() - 16,
+                                                y + (card_h - sz_s.get_height()) // 2))
+
+        # --- Footer action pills ---
+        store_r, inst_r = self._play_footer_rects()
+        for rect, label, col in [
+            (store_r, "\u22c6 Game Store", COL_STORE),
+            (inst_r,  "+ Install .ok", COL_PLAY),
+        ]:
+            hov = rect.collidepoint(mx, my)
+            bg = _lerp_color(COL_CARD, col, 0.4 if hov else 0.12)
+            pygame.draw.rect(self.screen, bg, rect, border_radius=10)
+            pygame.draw.rect(self.screen, col, rect, 2, border_radius=10)
+            lbl_s = self.font_mdb.render(label, True, col)
+            self.screen.blit(lbl_s, (
+                rect.x + rect.w // 2 - lbl_s.get_width() // 2,
+                rect.y + rect.h // 2 - lbl_s.get_height() // 2))
+
+    def _draw_settings(self):
+        self._draw_section_header("* Settings", COL_SETTINGS)
+        mx, my = self._mouse_pos
+        rects = self._settings_rects()
+        options = self._settings_options()
+        if options:
+            self.settings_idx = min(self.settings_idx, len(options) - 1)
+
+        for i, opt in enumerate(options):
+            r = rects[i]
+            is_sel = (i == self.settings_idx)
+            is_hov = r.collidepoint(mx, my)
+
+            color = _lerp_color(COL_CARD, COL_SELECTED, 0.7) if is_sel \
+                    else (COL_CARD_HOV if is_hov else COL_CARD)
+            pygame.draw.rect(self.screen, color, r, border_radius=10)
+            if is_sel:
+                pygame.draw.rect(self.screen, COL_SETTINGS, r, 2, border_radius=10)
+                sel_bar = pygame.Rect(r.x, r.y, 4, r.h)
+                pygame.draw.rect(self.screen, COL_SETTINGS, sel_bar,
+                                 border_radius=2)
+
+            label = self.font_mdb.render(opt, True,
+                                         COL_TEXT if is_sel else COL_TEXT2)
+            self.screen.blit(label, (60, r.y + (r.h - label.get_height()) // 2))
+
+            if is_sel:
+                arrow = self.font_md.render(">", True, COL_SETTINGS)
+                self.screen.blit(arrow, (WIDTH - 60, r.y + (r.h - arrow.get_height()) // 2))
+
+    def _draw_power(self):
+        self._draw_section_header("O Power", COL_POWER)
+        mx, my = self._mouse_pos
+        rects = self._power_rects()
+
+        pow_colors = [COL_WARN, COL_POWER, COL_DIM]
+
+        for i, opt in enumerate(POWER_OPTIONS):
+            r = rects[i]
+            is_sel = (i == self.power_idx)
+            is_hov = r.collidepoint(mx, my)
+            pc = pow_colors[i]
+
+            if is_sel:
+                card_col = _lerp_color(COL_CARD, pc, 0.35)
+            elif is_hov:
+                card_col = COL_CARD_HOV
+            else:
+                card_col = COL_CARD
+            pygame.draw.rect(self.screen, card_col, r, border_radius=14)
+            border = pc if is_sel else (COL_BORDER if is_hov else (30, 28, 55))
+            pygame.draw.rect(self.screen, border, r, 2, border_radius=14)
+
+            label = self.font_mdb.render(opt, True,
+                                         COL_TEXT if is_sel else COL_TEXT2)
+            self.screen.blit(label,
+                (r.x + r.w // 2 - label.get_width() // 2,
+                 r.y + r.h // 2 - label.get_height() // 2))
+
+    def _draw_section_header(self, title: str, color):
+        """Draw a polished header bar: left accent stripe, title, back hint, and clock."""
+        hdr_h = 56
+        # Subtle header background
+        hdr_bg = _alpha_surf(WIDTH, hdr_h, (0, 0, 8), 110)
+        self.screen.blit(hdr_bg, (0, 0))
+        # Left color accent stripe
+        pygame.draw.rect(self.screen, color, (0, 0, 4, hdr_h))
+
+        # Title — vertically centered in header band
+        surf = self.font_lg.render(title, True, color)
+        title_y = (hdr_h - surf.get_height()) // 2
+        self.screen.blit(surf, (18, title_y))
+        ver_surf = self.font_hint.render(f"v{self._os_version()}", True, COL_DIM)
+        self.screen.blit(ver_surf, (36 + surf.get_width(), (hdr_h - ver_surf.get_height()) // 2 + 2))
+
+        # Clock (embedded in header, far right)
+        clock_surf = None
+        try:
+            now = self._sast_time("%H:%M")
+            clock_surf = self.font_hint.render(now, True, COL_DIM)
+        except Exception:
+            pass
+
+        # Back hint — positioned to the left of the clock with a separator
+        back = self.font_hint.render("Esc / B  ←  Back", True, COL_DIM)
+        hint_y = (hdr_h - back.get_height()) // 2
+
+        if clock_surf:
+            clock_x = WIDTH - clock_surf.get_width() - 14
+            self.screen.blit(clock_surf, (clock_x, hint_y))
+            sep_x = clock_x - 12
+            pygame.draw.line(self.screen, (55, 52, 88),
+                             (sep_x, hint_y + 2),
+                             (sep_x, hint_y + back.get_height() - 2), 1)
+            self.screen.blit(back, (sep_x - back.get_width() - 10, hint_y))
+        else:
+            self.screen.blit(back, (WIDTH - back.get_width() - 14, hint_y))
+
+    def _draw_message(self):
+        if self.message and self.message_timer > 0:
+            surf = self.font_sm.render(self.message, True, COL_TEXT)
+            pad_x, pad_y = 20, 12
+            bw = surf.get_width() + pad_x * 2
+            bh = surf.get_height() + pad_y * 2
+            bg = pygame.Surface((bw, bh), pygame.SRCALPHA)
+            bg.fill((20, 18, 48, 230))
+            bx = WIDTH // 2 - bw // 2
+            by = HEIGHT - bh - 52
+            pygame.draw.rect(bg, COL_ACCENT, (0, 0, bw, bh), 1, border_radius=8)
+            self.screen.blit(bg, (bx, by))
+            self.screen.blit(surf, (bx + pad_x, by + pad_y))
+
+    def _draw_clock(self):
+        """Clock is drawn by the home top bar or sub-screen header."""
+        return
+
+    def _draw_hints(self):
+        hints = HINT_KB
+        h = self.font_hint.render(hints, True, COL_DIM)
+        # Subtle bottom bar background
+        bar = _alpha_surf(WIDTH, 44, (0, 0, 8), 110)
+        self.screen.blit(bar, (0, HEIGHT - 44))
+        self.screen.blit(h, (20, HEIGHT - 28))
+
+    def _draw_debug_overlay(self):
+        try:
+            with open("/proc/meminfo") as f:
+                lines = {l.split(":")[0]: l.split(":")[1].strip()
+                         for l in f if ":" in l}
+            avail = lines.get("MemAvailable", "?")
+            debug = f"DEV | RAM avail:{avail} | FPS:{self.clock.get_fps():.0f}"
+        except Exception:
+            debug = f"DEV | FPS:{self.clock.get_fps():.0f}"
+
+        surf = self.font_hint.render(debug, True, COL_WARN)
+        self.screen.blit(surf, (10, HEIGHT - 44 - surf.get_height() - 6))
+
+
+# ---------------------------------------------------------------------------
+# Framebuffer writer — blits an offscreen pygame surface to /dev/fb0
+# ---------------------------------------------------------------------------
+class FbWriter:
+    """Writes pygame surfaces directly to the Linux framebuffer (/dev/fb0).
+
+    Uses FBIOGET_VSCREENINFO / FBIOGET_FSCREENINFO ioctls for exact geometry
+    and pixel-format detection — no guessing from sysfs filenames.
+    """
+
+    FBIOGET_VSCREENINFO = 0x4600
+    FBIOGET_FSCREENINFO = 0x4602
+
+    def __init__(self, fb_path: str = "/dev/fb0"):
+        import mmap as _mmap
+        import fcntl as _fcntl
+        import struct as _struct
+
+        with open(fb_path, "rb+") as _probe:
+            # --- variable screen info (160 bytes) ---
+            # struct fb_var_screeninfo offsets:
+            #   0  xres           4  yres
+            #   8  xres_virtual  12  yres_virtual
+            #  16  xoffset       20  yoffset
+            #  24  bits_per_pixel
+            #  32  red.offset (struct fb_bitfield)
+            #  40  green.offset
+            #  48  blue.offset
+            vbuf = bytearray(160)
+            _fcntl.ioctl(_probe, self.FBIOGET_VSCREENINFO, vbuf)
+            self.w   = _struct.unpack_from("=I", vbuf,  0)[0]
+            self.h   = _struct.unpack_from("=I", vbuf,  4)[0]
+            self.vw  = _struct.unpack_from("=I", vbuf,  8)[0]
+            self.vh  = _struct.unpack_from("=I", vbuf, 12)[0]
+            self.xoff = _struct.unpack_from("=I", vbuf, 16)[0]
+            self.yoff = _struct.unpack_from("=I", vbuf, 20)[0]
+            self.bpp = _struct.unpack_from("=I", vbuf, 24)[0]
+            red_off   = _struct.unpack_from("=I", vbuf, 32)[0]
+            red_len   = _struct.unpack_from("=I", vbuf, 36)[0]
+            green_off = _struct.unpack_from("=I", vbuf, 40)[0]
+            green_len = _struct.unpack_from("=I", vbuf, 44)[0]
+            blue_off  = _struct.unpack_from("=I", vbuf, 48)[0]
+            blue_len  = _struct.unpack_from("=I", vbuf, 52)[0]
+
+            # --- fixed screen info (68 bytes) ---
+            # struct fb_fix_screeninfo:
+            #   0-15  id[16]
+            #  20    smem_len
+            #  32    line_length (smem_line_length)
+            fbuf = bytearray(68)
+            _fcntl.ioctl(_probe, self.FBIOGET_FSCREENINFO, fbuf)
+            self.mem_len = _struct.unpack_from("=I", fbuf, 20)[0]
+            self.stride = _struct.unpack_from("=I", fbuf, 32)[0]
+
+        # Determine pygame pixel-format string from hardware channel order
+        self.bytes_pp = max(1, self.bpp // 8)
+        if self.bpp == 32:
+            self._fmt = "BGRX" if blue_off == 0 else "RGBX"
+            self._packed = False
+        elif self.bpp == 24:
+            self._fmt = "BGR" if blue_off == 0 else "RGB"
+            self._packed = False
+        elif self.bpp in (15, 16):
+            if not (red_len and green_len and blue_len):
+                red_len, green_len, blue_len = (5, 6, 5) if self.bpp == 16 else (5, 5, 5)
+            self._packed = True
+            red_mask = ((1 << red_len) - 1) << red_off
+            green_mask = ((1 << green_len) - 1) << green_off
+            blue_mask = ((1 << blue_len) - 1) << blue_off
+            self._masks = (red_mask, green_mask, blue_mask, 0)
+        else:
+            raise RuntimeError(f"unsupported framebuffer depth: {self.bpp} bpp")
+
+        # Fall back to safe values if ioctl returned zeros
+        if self.w == 0 or self.h == 0:
+            self.w, self.h = WIDTH, HEIGHT
+        if self.vw == 0:
+            self.vw = self.w
+        if self.vh == 0:
+            self.vh = self.h
+        if self.stride == 0:
+            self.stride = self.w * self.bytes_pp
+
+        self._fb = open(fb_path, "rb+")
+        map_len = self.mem_len or (self.stride * self.h)
+        self._mm = _mmap.mmap(self._fb.fileno(), map_len)
+        self._base_offset = self.yoff * self.stride + self.xoff * self.bytes_pp
+        self._packed_surface = None
+        if self._packed:
+            self._packed_surface = pygame.Surface((self.w, self.h), 0, self.bpp, self._masks)
+        print(
+            f"Framebuffer: {self.w}x{self.h} {self.bpp}bpp stride={self.stride}",
+            file=sys.stderr)
+        self._ok = True
+
+    def _frame_bytes(self, surface):
+        if self._packed and self._packed_surface is not None:
+            self._packed_surface.blit(surface, (0, 0))
+            return self._packed_surface.get_buffer().raw, self._packed_surface.get_pitch()
+        return pygame.image.tostring(surface, self._fmt), self.w * self.bytes_pp
+
+    def present(self, surface):
+        if not self._ok:
+            return
+        try:
+            if (surface.get_width(), surface.get_height()) != (self.w, self.h):
+                surface = pygame.transform.scale(surface, (self.w, self.h))
+            raw, src_stride = self._frame_bytes(surface)
+            row_bytes = self.w * self.bytes_pp
+            if self.stride == row_bytes and src_stride == row_bytes:
+                # Fast path: framebuffer rows are tightly packed
+                self._mm.seek(self._base_offset)
+                self._mm.write(raw)
+            else:
+                # Slow path: framebuffer has per-row padding — write row by row
+                for y in range(self.h):
+                    src = y * src_stride
+                    self._mm.seek(self._base_offset + y * self.stride)
+                    self._mm.write(raw[src:src + row_bytes])
+        except Exception:
+            self._ok = False
+
+    def close(self):
+        try:
+            self._mm.close()
+            self._fb.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def main():
+    p = argparse.ArgumentParser(prog="okama-shell")
+    p.add_argument("--windowed", action="store_true",
+                   help="Run in a window instead of fullscreen (dev/host use)")
+    p.add_argument("--text", action="store_true",
+                   help="Force text-mode shell (no Pygame)")
+    args = p.parse_args()
+
+    conf = cfg_mod.get()
+    dev = conf.is_dev_mode()
+
+    if args.text or not PYGAME_OK:
+        _text_shell()
+        return
+
+    os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
+    os.environ.setdefault("SDL_RENDER_DRIVER", "software")
+
+    if args.windowed:
+        os.environ["SDL_VIDEODRIVER"] = "x11"  # dev host
+        pygame.init()
+        shell = OkamaShell(windowed=args.windowed, dev_mode=dev)
+        shell.run()
+        return
+
+    # On bare-metal/VM Linux with no X11/Wayland, framebuffer mode is the
+    # compatibility default. KMSDRM can still be selected explicitly for
+    # hardware where SDL's KMS backend is known-good.
+    fb_dev = conf.get("FRAMEBUFFER_DEVICE", "/dev/fb0")
+    drivers = []
+    display_mode = conf.get("DISPLAY_MODE", "framebuffer").lower()
+    allow_kms = display_mode == "drm" or os.environ.get("OKAMA_ALLOW_KMSDRM") == "yes"
+    if allow_kms and (os.path.exists("/dev/dri/card0") or os.path.exists("/dev/dri/card1")):
+        drivers.append("kmsdrm")
+    drivers.append("offscreen")  # always available
+
+    last_err = ""
+    for drv in drivers:
+        os.environ["SDL_VIDEODRIVER"] = drv
+        if drv == "offscreen":
+            os.environ["SDL_FBDEV"] = fb_dev
+        try:
+            pygame.display.quit()
+            pygame.init()
+            fb = None
+            if drv == "offscreen":
+                try:
+                    fb = FbWriter(fb_dev)
+                    # Match pygame surface to actual framebuffer resolution
+                    global WIDTH, HEIGHT
+                    WIDTH, HEIGHT = fb.w, fb.h
+                except Exception as fe:
+                    last_err = f"{drv}: framebuffer {fb_dev}: {fe}"
+                    print(f"FbWriter init failed: {fe}", file=sys.stderr)
+                    print("Framebuffer unavailable; using text fallback.",
+                          file=sys.stderr)
+                    continue
+            shell = OkamaShell(windowed=False, dev_mode=dev)
+            shell.run(fb=fb)
+            if fb:
+                fb.close()
+            return
+        except Exception as e:
+            last_err = f"{drv}: {e}"
+            print(f"SDL driver '{drv}' failed: {e}", file=sys.stderr)
+            try:
+                pygame.quit()
+            except Exception:
+                pass
+
+    print(f"All SDL drivers failed ({last_err}), falling back to text shell",
+          file=sys.stderr)
+    _text_shell(last_err)
+
+
+if __name__ == "__main__":
+    main()
