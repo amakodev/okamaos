@@ -7,7 +7,7 @@
 - `_is_zip()` now detects all ZIP magic signatures and falls back to `zipfile.is_zipfile()` for edge-case archives.
 - `download_game()` validates archive magic bytes after download to catch 404 pages served as HTML.
 - Updated `feed.json`: v2.1.1 "package-reliability" is now latest; v2.1.0 moved to previous.
-- SHA-256: `5ec0bc789e52b960dae4f51c6e9b6e1eb83e43dfebd240aef139bb4d2107c714`
+- SHA-256: `7b390ded7c8a6602a4b93f0e961f7650aae361dcff37396289228011bfb705e5`
 
 ## 2026-05-02 - v2.0.0 + v2.1.0 packages rebuilt with requirements.txt
 
