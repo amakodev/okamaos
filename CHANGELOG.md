@@ -1,5 +1,17 @@
 # OkamaOS Portal Changelog
 
+## 2026-05-03 - v2.1.2 game-recovery update package
+
+- Published `okamaos-v2.1.2.okupdate` system update bundle (59 KB / 60,858 bytes).
+- Adds update apply confirmation and developer-mode selection for detected `.okupdate` bundles.
+- Hides Install / Persistence on installed disk systems unless developer mode is enabled.
+- Fixes wallet balance parsing for `0x`, empty, and missing RPC quantity values.
+- Adds ranked storage diagnostics for games, saves, update downloads, game downloads, cache, logs, wallet, and controller data.
+- Stores game package downloads under `/var/okamaos/downloads` while OS updates stay under `/var/okamaos/updates/downloads`.
+- Adds crash-safe game launching with startup watchdog, emergency exit, crash logs, `last-game-status.json`, and framebuffer presentation bootstrap.
+- Updated `feed.json`: v2.1.2 "game-recovery" is now latest; v2.1.1 moved to previous.
+- SHA-256: `9c4baea06af2171b7a090583ce67aa11cc22eee7dcc41377da77f12e72c87371`
+
 ## 2026-05-03 - v2.1.1 package-reliability update package
 
 - Published `okamaos-v2.1.1.okupdate` system update bundle (5 KB).
