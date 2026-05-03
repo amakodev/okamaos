@@ -1,31 +1,37 @@
 {
   "schema_version": "1.0",
   "channel": "public-preview",
-  "updated_at": "2026-05-02T19:40:00Z",
+  "updated_at": "2026-05-03T00:15:00Z",
   "latest": {
-    "version": "2.1.0",
-    "codename": "relay-controls",
-    "date": "2026-05-02",
+    "version": "2.1.1",
+    "codename": "package-reliability",
+    "date": "2026-05-03",
     "status": "preview",
     "priority": "recommended",
-    "minimum_supported_version": "2.0.0",
-    "title": "Relay Controls & Dev Tooling",
-    "summary": "Argon2id wallet PIN hardening, parent wallet controls, Settings > Wallet PIN unlock overlay, Update History browser (dev mode), and Store URL gated to dev mode.",
+    "minimum_supported_version": "2.1.0",
+    "title": ".ok Package Install Reliability",
+    "summary": "Fixes 'not a gzip file' when installing ZIP-format .ok packages built by Okama Studio. Adds archive magic validation after store download and clearer diagnostic messages.",
     "notes": [
-      "Security: wallet passphrase now Argon2id-stretched (64 MB, t=2) when argon2-cffi is installed.",
-      "New: parent.conf WALLET_ENABLED and WALLET_DAILY_LIMIT_OKT controls via parent.py.",
-      "New: Settings > Wallet [A] opens PIN unlock overlay; fetches live ETH + OKT balances on confirm.",
-      "New (dev): Settings > Updates > Browse Update History — fetches feed.json, lists all versions, [A] to download.",
-      "Changed: Game Store 'Set Server URL' button now hidden unless dev mode is active (F10).",
-      "Bump: VERSION 2.0.0 -> 2.1.0."
+      "Fix: _is_zip() now detects all ZIP magic signatures and falls back to zipfile.is_zipfile() for edge-case archives.",
+      "Fix: _sniff_content() diagnostic helper reports whether a file is HTML, JSON, empty, or unknown instead of cryptic gzip errors.",
+      "Fix: download_game() validates archive magic bytes after download to catch 404 pages served as HTML.",
+      "Bump: VERSION 2.1.0 -> 2.1.1."
     ],
     "release_notes_url": "CHANGELOG.md",
-    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.0.okupdate",
+    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.1.okupdate",
     "artifact_status": "bundle-ready",
-    "sha256": "9ba483f1042c91fa51790480c1409e970e0509014a883f55780835c717d77223",
-    "size_bytes": 47257
+    "sha256": "5ec0bc789e52b960dae4f51c6e9b6e1eb83e43dfebd240aef139bb4d2107c714",
+    "size_bytes": 5285
   },
   "previous": [
+    {
+      "version": "2.1.0",
+      "codename": "relay-controls",
+      "date": "2026-05-02",
+      "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.0.okupdate",
+      "sha256": "9ba483f1042c91fa51790480c1409e970e0509014a883f55780835c717d77223",
+      "size_bytes": 47257
+    },
     {
       "version": "2.0.0",
       "codename": "base-chain",
