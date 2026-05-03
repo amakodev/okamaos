@@ -1,5 +1,14 @@
 # OkamaOS Portal Changelog
 
+## 2026-05-03 - v2.1.1 package-reliability update package
+
+- Published `okamaos-v2.1.1.okupdate` system update bundle (5 KB).
+- Fixes ZIP-format `.ok` package install failures ("not a gzip file") when packages are built by Okama Studio.
+- `_is_zip()` now detects all ZIP magic signatures and falls back to `zipfile.is_zipfile()` for edge-case archives.
+- `download_game()` validates archive magic bytes after download to catch 404 pages served as HTML.
+- Updated `feed.json`: v2.1.1 "package-reliability" is now latest; v2.1.0 moved to previous.
+- SHA-256: `5ec0bc789e52b960dae4f51c6e9b6e1eb83e43dfebd240aef139bb4d2107c714`
+
 ## 2026-05-02 - v2.0.0 + v2.1.0 packages rebuilt with requirements.txt
 
 - Both packages rebuilt to include `requirements.txt` at bundle root.
