@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "package_type": "system_update",
+  "id": "okamaos",
+  "name": "OkamaOS",
+  "version": "2.1.2",
+  "codename": "game-recovery",
+  "date": "2026-05-03",
+  "target_version": "2.1.1",
+  "minimum_supported_version": "2.1.1",
+  "title": "Update Safety, Storage, and Game Recovery",
+  "summary": "Adds update apply confirmation, dev-mode update bundle selection, installed-system menu hiding, wallet RPC hex normalization, richer storage diagnostics, and crash-safe game launching.",
+  "notes": [
+    "Updates now ask for confirmation before applying a downloaded OS bundle.",
+    "Dev mode lists detected .okupdate files with path, size, and modified time before apply.",
+    "Installed disk systems hide Install / Persistence unless developer mode is enabled.",
+    "Wallet RPC quantity parsing treats 0x, empty, and missing values as zero and skips unset OKToken contracts.",
+    "Storage Info ranks game, save, update, cache, log, wallet, controller, and download usage with largest files.",
+    "Game package downloads now use /var/okamaos/downloads while OS updates use /var/okamaos/updates/downloads.",
+    "okama-run now supervises games with startup timeout, emergency exit, crash logs, status JSON, and a recovery screen.",
+    "Plain pygame games are auto-presented to the framebuffer through /usr/lib/okamaos/game_bootstrap.py.",
+    "Bump: VERSION 2.1.1 -> 2.1.2."
+  ],
+  "files": [
+    "/usr/bin/okama-run",
+    "/usr/bin/okama-shell",
+    "/usr/bin/okama-install",
+    "/usr/lib/okamaos/VERSION",
+    "/usr/lib/okamaos/__init__.py",
+    "/usr/lib/okamaos/config.py",
+    "/usr/lib/okamaos/display.py",
+    "/usr/lib/okamaos/wallet.py",
+    "/usr/lib/okamaos/game_bootstrap.py",
+    "/usr/share/okamaos/templates/blank/main.py",
+    "/usr/share/okamaos/templates/platformer/main.py",
+    "/etc/profile"
+  ],
+  "config_merges": [
+    {
+      "path": "/etc/okamaos/okama.conf",
+      "set": {
+        "VERSION": "2.1.2"
+      },
+      "defaults": {
+        "GAME_START_TIMEOUT_SEC": "20",
+        "GAME_TERM_GRACE_SEC": "2",
+        "GAME_AUTO_FB_PRESENT": "yes"
+      }
+    }
+  ],
+  "post_install": [],
+  "requirements_file": "requirements.txt",
+  "requires_reboot": true
+}

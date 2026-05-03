@@ -1,38 +1,46 @@
 {
   "schema_version": "1.0",
   "channel": "public-preview",
-  "updated_at": "2026-05-03T01:30:00Z",
+  "updated_at": "2026-05-03T15:00:00Z",
   "latest": {
-    "version": "2.1.2",
-    "codename": "game-recovery",
+    "version": "2.2.0",
+    "codename": "repair-update",
     "date": "2026-05-03",
     "status": "preview",
     "priority": "recommended",
-    "minimum_supported_version": "2.1.1",
-    "title": "Update Safety, Storage, and Game Recovery",
-    "summary": "Adds update apply confirmation, dev-mode update bundle selection, installed-system menu hiding, wallet RPC hex normalization, richer storage diagnostics, and crash-safe game launching.",
+    "minimum_supported_version": "2.0.0",
+    "title": "System Repair Update",
+    "summary": "Adds system repair update option that preserves user data (games, saves, wallet, Wi-Fi profiles, controller configs, SSH keys) when updating an existing OkamaOS installation. Also updates installer with detection and backup/restore functions.",
     "notes": [
-      "Update apply now requires a confirmation screen before writing system files.",
-      "Developer mode lists every detected .okupdate bundle with file size, modified time, and path.",
-      "Installed disk systems hide Install / Persistence unless developer mode is enabled.",
-      "Wallet balance parsing treats 0x, empty, and missing RPC quantities as zero and skips unset OKToken contracts.",
-      "Storage Info ranks game, save, update, cache, log, wallet, controller, and download usage with largest files.",
-      "Game package downloads now use /var/okamaos/downloads while OS updates use /var/okamaos/updates/downloads.",
-      "okama-run now uses a watchdog loop, startup timeout, emergency exit, crash logs, last-game-status.json, and a recovery screen.",
-      "Plain pygame games are framebuffer-presented through /usr/lib/okamaos/game_bootstrap.py.",
-      "Bump: VERSION 2.1.1 -> 2.1.2."
+      "okama-install --repair-update preserves user data during OS reinstallation.",
+      "okama-install --detect-existing-os checks for existing installations on target disk.",
+      "Settings > Install/Persistence now auto-detects existing OS and shows Repair Update option.",
+      "Repair Update selection screen lists disks with existing OS and allows one-press update.",
+      "All user data paths are preserved: games, saves, wallet, downloads, Wi-Fi, configs, SSH keys.",
+      "Install state tracks update history with UPDATED_FROM and UPDATED_AT fields.",
+      "Bump: VERSION 2.1.2 -> 2.2.0."
     ],
     "release_notes_url": "CHANGELOG.md",
-    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.2.okupdate",
+    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.2.0.okupdate",
     "artifact_status": "bundle-ready",
-    "sha256": "9c4baea06af2171b7a090583ce67aa11cc22eee7dcc41377da77f12e72c87371",
-    "size_bytes": 60858
+    "sha256": "4104e0999c3dcfffcb6df84a489a2e4b47641f09a2b9f4c64324a66ab4ed0b3f",
+    "size_bytes": 48462
   },
   "previous": [
+    {
+      "version": "2.1.2",
+      "codename": "game-recovery",
+      "date": "2026-05-03",
+      "minimum_supported_version": "2.0.0",
+      "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.2.okupdate",
+      "sha256": "9c4baea06af2171b7a090583ce67aa11cc22eee7dcc41377da77f12e72c87371",
+      "size_bytes": 60858
+    },
     {
       "version": "2.1.1",
       "codename": "package-reliability",
       "date": "2026-05-03",
+      "minimum_supported_version": "2.0.0",
       "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.1.okupdate",
       "sha256": "7b390ded7c8a6602a4b93f0e961f7650aae361dcff37396289228011bfb705e5",
       "size_bytes": 5285
@@ -41,6 +49,7 @@
       "version": "2.1.0",
       "codename": "relay-controls",
       "date": "2026-05-02",
+      "minimum_supported_version": "2.0.0",
       "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.0.okupdate",
       "sha256": "9ba483f1042c91fa51790480c1409e970e0509014a883f55780835c717d77223",
       "size_bytes": 47257
@@ -49,6 +58,7 @@
       "version": "2.0.0",
       "codename": "base-chain",
       "date": "2026-05-02",
+      "minimum_supported_version": "2.0.0",
       "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.0.0.okupdate",
       "sha256": "1e86ea3eb9a0e5df831f127b4016ff692cc020d5399cc7d63961dbaaa3279a1c",
       "size_bytes": 51489
@@ -57,6 +67,7 @@
       "version": "1.3.2",
       "codename": "ui-stability",
       "date": "2026-05-02",
+      "minimum_supported_version": "1.0.0",
       "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.3.2.okupdate",
       "sha256": "2958569ea63b81ad6b84772fd52aba9e3bc77103e6ccc8d1a401d6faa2c7fffd",
       "size_bytes": 35235
@@ -65,6 +76,7 @@
       "version": "1.3.1",
       "codename": "url-fix",
       "date": "2026-05-02",
+      "minimum_supported_version": "1.0.0",
       "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.3.1.okupdate",
       "sha256": "6d9f66f7adf65f5a8779d4aff099cffd510526e8a29be340026a528aaf377072",
       "size_bytes": 34643
@@ -73,6 +85,7 @@
       "version": "1.3.0",
       "codename": "devlink",
       "date": "2026-05-02",
+      "minimum_supported_version": "1.0.0",
       "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.3.0.okupdate",
       "sha256": "7311537148ec04ca436bb21fd31ee115a412fcd33cc9a2c3420077b46928666b",
       "size_bytes": 36623
@@ -81,6 +94,7 @@
       "version": "1.0.2",
       "codename": "Safe System Update",
       "date": "2026-04-29",
+      "minimum_supported_version": "1.0.0",
       "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.0.2.okupdate",
       "sha256": "87f43425884332a6e5e2bac2cd69b6c4d59efd53368e0fe43de2cde8ad6cfceb",
       "size_bytes": 28107
