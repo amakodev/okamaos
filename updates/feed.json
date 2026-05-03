@@ -1,29 +1,42 @@
 {
   "schema_version": "1.0",
   "channel": "public-preview",
-  "updated_at": "2026-05-03T00:15:00Z",
+  "updated_at": "2026-05-03T01:30:00Z",
   "latest": {
-    "version": "2.1.1",
-    "codename": "package-reliability",
+    "version": "2.1.2",
+    "codename": "game-recovery",
     "date": "2026-05-03",
     "status": "preview",
     "priority": "recommended",
-    "minimum_supported_version": "2.1.0",
-    "title": ".ok Package Install Reliability",
-    "summary": "Fixes 'not a gzip file' when installing ZIP-format .ok packages built by Okama Studio. Adds archive magic validation after store download and clearer diagnostic messages.",
+    "minimum_supported_version": "2.1.1",
+    "title": "Update Safety, Storage, and Game Recovery",
+    "summary": "Adds update apply confirmation, dev-mode update bundle selection, installed-system menu hiding, wallet RPC hex normalization, richer storage diagnostics, and crash-safe game launching.",
     "notes": [
-      "Fix: _is_zip() now detects all ZIP magic signatures and falls back to zipfile.is_zipfile() for edge-case archives.",
-      "Fix: _sniff_content() diagnostic helper reports whether a file is HTML, JSON, empty, or unknown instead of cryptic gzip errors.",
-      "Fix: download_game() validates archive magic bytes after download to catch 404 pages served as HTML.",
-      "Bump: VERSION 2.1.0 -> 2.1.1."
+      "Update apply now requires a confirmation screen before writing system files.",
+      "Developer mode lists every detected .okupdate bundle with file size, modified time, and path.",
+      "Installed disk systems hide Install / Persistence unless developer mode is enabled.",
+      "Wallet balance parsing treats 0x, empty, and missing RPC quantities as zero and skips unset OKToken contracts.",
+      "Storage Info ranks game, save, update, cache, log, wallet, controller, and download usage with largest files.",
+      "Game package downloads now use /var/okamaos/downloads while OS updates use /var/okamaos/updates/downloads.",
+      "okama-run now uses a watchdog loop, startup timeout, emergency exit, crash logs, last-game-status.json, and a recovery screen.",
+      "Plain pygame games are framebuffer-presented through /usr/lib/okamaos/game_bootstrap.py.",
+      "Bump: VERSION 2.1.1 -> 2.1.2."
     ],
     "release_notes_url": "CHANGELOG.md",
-    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.1.okupdate",
+    "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.2.okupdate",
     "artifact_status": "bundle-ready",
-    "sha256": "7b390ded7c8a6602a4b93f0e961f7650aae361dcff37396289228011bfb705e5",
-    "size_bytes": 5285
+    "sha256": "9c4baea06af2171b7a090583ce67aa11cc22eee7dcc41377da77f12e72c87371",
+    "size_bytes": 60858
   },
   "previous": [
+    {
+      "version": "2.1.1",
+      "codename": "package-reliability",
+      "date": "2026-05-03",
+      "download_url": "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.1.okupdate",
+      "sha256": "7b390ded7c8a6602a4b93f0e961f7650aae361dcff37396289228011bfb705e5",
+      "size_bytes": 5285
+    },
     {
       "version": "2.1.0",
       "codename": "relay-controls",
