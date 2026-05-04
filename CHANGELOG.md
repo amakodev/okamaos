@@ -1,5 +1,19 @@
 # OkamaOS Portal Changelog
 
+## 2026-05-07 - GTM launch polish
+
+- **Nav consistency**: all 8 portal pages now share the identical full navigation (`Docs · Packages · Studio · Marketplace · Wallet · Leaderboard · Get OS · Changelog`). Previously docs/packages/studio/changelog were missing Marketplace/Wallet/Leaderboard; marketplace/wallet/leaderboard were missing Get OS/Changelog.
+- **Header CTA**: marketplace and leaderboard pages updated to "Open Studio" (was "My Wallet").
+- **SEO**: added `og:title`, `og:description`, `og:type`, `og:url`, `og:image`, `twitter:card`, `canonical`, and `robots` meta tags to all 8 pages.
+- **JSON-LD**: added `WebSite` schema on `index.html`.
+- **`site.webmanifest`**: added manifest link to docs, packages, studio, and changelog pages.
+- **Hero copy**: stronger benefit-led headline on `index.html` ("Turn any low-cost PC into a dedicated game console…").
+- **Social proof strip**: GitHub link, version badge, "OKToken on Base", and "Free forever" added below hero text.
+- **Footer**: GitHub open-source link added to footer on `index.html`.
+- **Hero panel**: OS build updated to `2.1.2 game-recovery`; Studio to `v0.3.4`.
+- **`app.js` fallback data**: updated to v2.1.2 "game-recovery" (was stuck on v1.3.0).
+- **Mobile**: `touch-action: manipulation` and `-webkit-tap-highlight-color: transparent` added to all button/CTA elements.
+
 ## 2026-05-03 - v2.1.2 game-recovery update package
 
 - Published `okamaos-v2.1.2.okupdate` system update bundle (59 KB / 60,858 bytes).
