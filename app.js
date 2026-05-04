@@ -23,26 +23,26 @@ const fallbackCatalog = {
 
 const fallbackUpdates = {
   latest: {
-    version: "1.3.0",
-    codename: "devlink",
-    date: "2026-05-02",
+    version: "2.1.2",
+    codename: "game-recovery",
+    date: "2026-05-03",
     status: "preview",
     priority: "recommended",
-    title: "Dev-server hosting, ZIP package support, input & console fixes",
+    title: "Crash-safe game launching, storage diagnostics, wallet balance fix",
     summary:
-      "Fixes .ok package installs from Okama Studio (ZIP format), enables key-hold navigation, cleans ANSI codes in the dev console, and adds custom store URL for dev-server game hosting.",
+      "Adds crash-safe game launching with startup watchdog, ranked storage diagnostics, wallet balance parsing fixes, and developer-mode gated persistence options.",
     notes: [
-      "Fix: .ok packages built by Okama Studio (JSZip/ZIP) now install and run correctly.",
-      "Fix: Holding arrow or WASD keys now auto-repeats navigation.",
-      "Fix: Dev console no longer displays ANSI escape sequences as symbols.",
-      "Fix: Dev console command input tail-scrolls when longer than the display width.",
-      "Feature: Game Store X button opens custom store URL entry for wireless dev game installs."
+      "New: Crash-safe game launching with startup watchdog, emergency exit, and crash logs.",
+      "New: Ranked storage diagnostics for games, saves, wallet, and controller data.",
+      "New: Game packages download to /var/okamaos/downloads; OS updates stay in /var/okamaos/updates/downloads.",
+      "New: Update apply confirmation with developer-mode selection for .okupdate bundles.",
+      "Fix: Wallet balance parsing for 0x, empty, and missing RPC quantity values."
     ],
     release_notes_url: "changelog.html",
-    download_url: "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v1.3.0.okupdate",
+    download_url: "https://zyntrixsolutions.github.io/okamaos/updates/okamaos-v2.1.2.okupdate",
     artifact_status: "bundle-ready",
-    sha256: "7311537148ec04ca436bb21fd31ee115a412fcd33cc9a2c3420077b46928666b",
-    size_bytes: 36623
+    sha256: "9c4baea06af2171b7a090583ce67aa11cc22eee7dcc41377da77f12e72c87371",
+    size_bytes: 60858
   }
 };
 
